@@ -1,0 +1,6 @@
+__pycache__/
+
+venv
+.envrc
+
+.DS_Store
