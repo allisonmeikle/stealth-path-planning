@@ -20,7 +20,8 @@ def add_polygon(ax, poly, **kwargs):
         for subpoly in poly.geoms:
             add_polygon(ax, subpoly, **kwargs)
 
-def plot_shadow_polygon(plot_size, map_poly, obstacles, guard, player, shadow_area, kernels) :
+def plot_shadow_polygon(plot_size, map_poly, obstacles, guard, player, shadow_area, kernels, save_plot = False, file_name = '') :
+    os.makedirs('maps', exist_ok=True)
     plt.figure(figsize=plot_size)
     ax = plt.gca()
 
@@ -78,7 +79,12 @@ def plot_shadow_polygon(plot_size, map_poly, obstacles, guard, player, shadow_ar
     plt.ylim(miny - 1, maxy + 1)
     ax.set_aspect("equal", adjustable="box")
     plt.title("Map with Guard Visibility (Red) and Shadow (Blue)")
-    plt.show()
+    if (save_plot):
+        out_path = os.path.join('maps', file_name)
+        plt.savefig(out_path, dpi=150)
+        plt.close()
+    else: 
+        plt.show()
 
 def save_game_state_map(file_name, map_poly, obstacles, guard, player, plot_size = (11,7), out_dir = 'maps'):
     os.makedirs(out_dir, exist_ok=True)
@@ -117,6 +123,8 @@ def save_game_state_map(file_name, map_poly, obstacles, guard, player, plot_size
     plt.close()
 
 def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path, plot_size = (11, 7), save_plot = False, file_name = ''):
+    os.makedirs('maps', exist_ok=True)
+
     plt.figure(figsize=plot_size)
     ax = plt.gca()
 
@@ -161,7 +169,9 @@ def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path,
     plt.title("Game Step with Guard, Player, Shadow, and Path")
     
     if (save_plot):
-        plt.savefig(file_name, dpi=150)
+        out_path = os.path.join('maps', file_name)
+        plt.savefig(out_path, dpi=150)
         plt.close()
     else: 
         plt.show()
+

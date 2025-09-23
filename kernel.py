@@ -1,21 +1,21 @@
-import pyvisgraph as vg
-
+import math
 from typing import List, Tuple
 from shapely import Geometry, Point, Polygon, LineString
+from extremitypathfinder import PolygonEnvironment
 
 class Kernel:
-    def __init__(self, point: Point, depth: int):
-        self._point = point
+    def __init__(self, coords: Tuple[float, float], depth: int):
+        self._coords = coords
         self._depth = depth
     
-    def get_point(self) -> Point:
-        return self._point
+    def get_coords(self) -> Tuple[float, float]:
+        return self._coords
     
     def get_depth(self) -> int:
         return self._depth
     
     def __str__(self) -> str:
-        return f"Kernel (point=({self._point.x:.2f}, {self._point.y:.2f}), depth={self._depth})"
+        return f"Kernel (point=({self._coords[0]:.2f}, {self._coords[1]:.2f}), depth={self._depth})"
 
 
 def find_kernels(shape: Geometry, step: float, depth : int) -> List[Kernel]:
@@ -26,10 +26,10 @@ def find_kernels(shape: Geometry, step: float, depth : int) -> List[Kernel]:
         mid = shape.interpolate(0.5, normalized=True)  # midpoint
         if (isinstance(mid, Point)):
             print(f"Got middle of a LineString at depth {depth}, returning point {mid}")
-            return [Kernel(mid, depth)]
+            return [Kernel((mid.x, mid.y), depth)]
     elif (shape.geom_type == 'Point'):
         print(f"Got a Point at depth {depth}, returning point {shape}")
-        return [Kernel(shape, depth)]
+        return [Kernel((shape.x, shape.y), depth)]
 
     # Recursive steps
     if (shape.geom_type == 'Polygon'):
@@ -53,34 +53,37 @@ def find_kernels(shape: Geometry, step: float, depth : int) -> List[Kernel]:
     print("Unsupported geometry type:", shape.geom_type)
     return []
 
-def get_kernel_point(poly: Polygon) -> Point:
+def get_kernel_point(poly: Polygon) -> Tuple[float, float]:
     centroid = poly.centroid
     if (poly.contains(centroid) and isinstance(centroid, Point)):
-        return centroid
-    return poly.representative_point()
+        return (centroid.x, centroid.y)
+    rp = poly.representative_point()
+    return (rp.x, rp.y)
 
-def get_reachable_kernels(graph : vg.VisGraph, max_step : float, loc : Point, kernels : List[Kernel]) -> List[Tuple[Kernel, LineString]]:
+def get_reachable_kernels(env : PolygonEnvironment, max_step : float, loc : Tuple[float, float], kernels : List[Kernel]) -> List[Tuple[Kernel, LineString]]:
     reachable = []
-    start = vg.Point(loc.x, loc.y)
 
     for k in kernels:
-        kp = k.get_point()
-        target_pt = vg.Point(kp.x, kp.y)
+        target = k.get_coords()
+
+        
 
         # Step 1: Euclidean shortcut check
-        if loc.distance(kp) > max_step:
+        if math.dist(loc, target) > max_step:
             continue
 
         # Step 2: Compute shortest path
-        path = graph.shortest_path(start, target_pt)
-        if not path:
+        path, length = env.find_shortest_path(loc, target)
+        
+        # No valid path found 
+        if not length:
             continue
 
         # Convert to shapely LineString
-        coords = [(p.x, p.y) for p in path]
+        coords = [(p[0], p[1]) for p in path]
         line = LineString(coords)
 
-        if line.length <= max_step:
+        if length <= max_step:
             reachable.append((k, line))
 
     return reachable

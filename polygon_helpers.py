@@ -2,7 +2,7 @@ import visilibity as vis
 import pyvisgraph as vg
 from typing import List
 from shapely.geometry.base import BaseGeometry
-from shapely.geometry import Polygon, Point
+from shapely.geometry import *
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
@@ -66,20 +66,45 @@ def compute_kernels(shadows : List[BaseGeometry], step : float) -> List[List[Ker
         kernels.append(find_kernels(shadows[i], step, 0))
     return kernels
 
-def build_visibility_graph(map_poly: Polygon, obstacles: list[Polygon]) -> vg.VisGraph:
-    import pyvisgraph as vg
+def shapely_to_vg(geom: BaseGeometry) -> list[list[vg.Point]]:
+    """
+    Convert a Shapely geometry into pyvisgraph polygons.
+    Always returns a list of polygons (each polygon = list of vg.Points).
+    """
+    if isinstance(geom, Polygon):
+        coords = list(geom.exterior.coords)[:-1]  # skip closing duplicate
+        return [[vg.Point(x, y) for x, y in coords]]
 
-    # Convert shapely polygons into pyvisgraph polygons
-    def shapely_to_vg(poly: Polygon):
-        return [vg.Point(x, y) for x, y in poly.exterior.coords[:-1]]  # exclude closing point
+    elif isinstance(geom, MultiPolygon):
+        polys = []
+        for poly in geom.geoms:
+            coords = list(poly.exterior.coords)[:-1]
+            polys.append([vg.Point(x, y) for x, y in coords])
+        return polys
 
-    # Obstacles + map boundary walls
-    polygons = [shapely_to_vg(obs) for obs in obstacles]
+    elif isinstance(geom, LineString):
+        coords = list(geom.coords)
+        return [[vg.Point(x, y) for x, y in coords]]
 
-    # Add the map boundary as a "polygon obstacle"
-    polygons.append(shapely_to_vg(map_poly))
+    elif isinstance(geom, Point):
+        return [[vg.Point(geom.x, geom.y)]]
 
-    # Build the graph
+    else:
+        raise TypeError(f"Unsupported geometry type: {type(geom)}")
+
+
+def build_visibility_graph(map_poly: Polygon, obstacles: list[Polygon], grid_size: tuple[int, int]) -> vg.VisGraph:
+    # Outer world bounding box (larger than your map)
+    outer = Polygon([(0, 0), (0, grid_size[1]), (grid_size[0], grid_size[1]), (grid_size[0], 0)])
+
+    # Treat "outside map" as an obstacle
+    boundary = outer.difference(map_poly)
+
+    polygons: list[list[vg.Point]] = []
+    for obs in obstacles:
+        polygons.extend(shapely_to_vg(obs))
+    polygons.extend(shapely_to_vg(boundary))
+
     graph = vg.VisGraph()
     graph.build(polygons)
     return graph
