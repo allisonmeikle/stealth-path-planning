@@ -66,8 +66,6 @@ def get_reachable_kernels(env : PolygonEnvironment, max_step : float, loc : Tupl
     for k in kernels:
         target = k.get_coords()
 
-        
-
         # Step 1: Euclidean shortcut check
         if math.dist(loc, target) > max_step:
             continue

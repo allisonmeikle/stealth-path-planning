@@ -32,4 +32,8 @@ guard_positions = [
 
 # Running MCTS
 monte_carlo_tree = MonteCarloTree(map, obstacles, player_start_pos, guard_positions, max_step)
-monte_carlo_tree.run()
+result = monte_carlo_tree.run()
+'''
+while (not result):
+    result = monte_carlo_tree.run()
+'''
