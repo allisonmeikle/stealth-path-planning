@@ -125,7 +125,7 @@ def save_game_state_map(file_name, map_poly, obstacles, guard, player, plot_size
     plt.savefig(out_path, dpi=150)
     plt.close()
 
-def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path, plot_size=(11, 7), save_plot=False, file_name=''):
+def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path, time_step, plot_size=(11, 7), save_plot=False, file_name=''):
     os.makedirs('maps', exist_ok=True)
 
     plt.figure(figsize=plot_size)
@@ -176,7 +176,7 @@ def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path,
     plt.xlim(minx - 1, maxx + 1)
     plt.ylim(miny - 1, maxy + 1)
     ax.set_aspect("equal", adjustable="box")
-    plt.title("Game Step with Guard, Player, Shadow, and Path")
+    plt.title(f"Game Step with Guard, Player, Shadow, and Path (time_step = {time_step})")
     
     if save_plot:
         out_path = os.path.join('maps', file_name)

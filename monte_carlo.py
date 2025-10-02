@@ -91,7 +91,7 @@ class MonteCarloTree:
                 node.children.append(new_child)
                 print(f"Added child: {new_child}")
                 file_name = f"map_from_{node.get_loc()[0]:.2f}_{node.get_loc()[1]:.2f}_to_{loc[0]:.2f}_{loc[1]:.2f}.png"
-                plot_move(self.shapely_map, self.shapely_obstacles, self.shapely_guard_positions[new_child.depth], Point(node.get_loc()), self.shadows[new_child.depth], Point(loc), path, save_plot=True, file_name=file_name)
+                plot_move(self.shapely_map, self.shapely_obstacles, self.shapely_guard_positions[new_child.depth], Point(node.get_loc()), self.shadows[new_child.depth], Point(loc), path, new_child.depth, save_plot=True, file_name=file_name)
                 return new_child
         
         raise RuntimeError("Expand was called on a fully-expanded node")
