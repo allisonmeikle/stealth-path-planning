@@ -4,6 +4,8 @@ from shapely.geometry import box
 from shapely.ops import unary_union
 from descartes import PolygonPatch
 
+plt.style.use("classic")
+
 def add_polygon(ax, poly, **kwargs):
     if poly.is_empty:
         return
@@ -36,8 +38,9 @@ def plot_shadow_polygon(plot_size, map_poly, obstacles, guard, player, shadow_ar
     outside = bounds.difference(map_poly)
 
     # Draw outside & obstacles
-    add_polygon(ax, outside, fc="dimgray", alpha=1.0)
-    add_polygon(ax, obstacles_union, fc="dimgray", alpha=1.0)
+    add_polygon(ax, outside, fc="dimgray", alpha=1.0, zorder=1)
+    add_polygon(ax, map_poly, fc="white", alpha=1.0, zorder=0)
+    add_polygon(ax, obstacles_union, fc="dimgray", alpha=2.0)
 
     # Guard point
     plt.plot(guard.x, guard.y, "r^", markersize=4, label='Guard')
@@ -46,7 +49,7 @@ def plot_shadow_polygon(plot_size, map_poly, obstacles, guard, player, shadow_ar
     plt.plot(player.x, player.y, "bo", markersize=4, label='Player')
 
     # Shadow area
-    add_polygon(ax, shadow_area, fc="blue", alpha=0.3)
+    add_polygon(ax, shadow_area, fc="blue", alpha=0.3, zorder=3)
 
     kernel_label_added = False
 
@@ -122,7 +125,7 @@ def save_game_state_map(file_name, map_poly, obstacles, guard, player, plot_size
     plt.savefig(out_path, dpi=150)
     plt.close()
 
-def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path, plot_size = (11, 7), save_plot = False, file_name = ''):
+def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path, plot_size=(11, 7), save_plot=False, file_name=''):
     os.makedirs('maps', exist_ok=True)
 
     plt.figure(figsize=plot_size)
@@ -138,12 +141,17 @@ def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path,
     # Outside region = bounding box minus map polygon
     outside = bounds.difference(map_poly)
 
-    # Draw outside & obstacles
-    add_polygon(ax, outside, fc="dimgray", alpha=1.0)
-    add_polygon(ax, obstacles_union, fc="dimgray", alpha=1.0)
+    # Draw outside region (non-walkable)
+    add_polygon(ax, outside, fc="dimgray", ec="black", alpha=1.0, zorder=0)
+
+    # Draw map interior (walkable area)
+    add_polygon(ax, map_poly, fc="white", ec="black", alpha=1.0, zorder=1)
+
+    # Draw obstacles inside map
+    add_polygon(ax, obstacles_union, fc="dimgray", ec="black", alpha=1.0, zorder=2)
 
     # Shadow polygons
-    add_polygon(ax, shadow_area, fc="blue", alpha=0.3)
+    add_polygon(ax, shadow_area, fc="blue", alpha=0.3, zorder=3)
 
     # Guard position
     ax.plot(guard.x, guard.y, "r^", markersize=6, label="Guard")
@@ -159,8 +167,10 @@ def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path,
         x, y = path.xy
         ax.plot(x, y, "g--", linewidth=2, label="Path")
 
-    # Legend
-    plt.legend(loc="upper right")
+    # Deduplicate legend entries
+    handles, labels = ax.get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    ax.legend(by_label.values(), by_label.keys(), loc="upper right")
 
     # Axis setup
     plt.xlim(minx - 1, maxx + 1)
@@ -168,10 +178,9 @@ def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path,
     ax.set_aspect("equal", adjustable="box")
     plt.title("Game Step with Guard, Player, Shadow, and Path")
     
-    if (save_plot):
+    if save_plot:
         out_path = os.path.join('maps', file_name)
         plt.savefig(out_path, dpi=150)
         plt.close()
     else: 
         plt.show()
-

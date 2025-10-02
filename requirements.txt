@@ -1,0 +1,7 @@
+shapely>=2.0.0
+extremitypathfinder>=2.7.2
+visilibity>=0.1.5
+pyvisgraph>=0.2.1
+matplotlib>=3.9.0
+descartes>=1.1.0
+tqdm>=4.66.0

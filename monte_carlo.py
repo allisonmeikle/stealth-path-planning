@@ -7,6 +7,7 @@ from extremitypathfinder import PolygonEnvironment
 from kernel import find_kernels, Kernel
 from polygon_helpers import *
 from plot_helper import *
+from helpers import *
 
 import math
 
@@ -50,26 +51,50 @@ class MonteCarloTree:
             print("Current node in selection loop: ", current)
 
             if (current.depth >= (len(self.shapely_guard_positions)-1)):
+                print("Selection ended on a leaf, returning None")
                 # Optimal path to a leaf has been found
                 return None
             
             num_potential_moves = len(current.get_potential_moves())
+            num_children = 0 if current.children is None else len(current.children)
             if (num_potential_moves == 0):
                 raise RuntimeError("During selection, found a node with no potential moves that is not a leaf.")
-            if num_potential_moves > len(current.children):
+            
+            if num_potential_moves > num_children:
                 return self.expand(current)
             else: 
+                print(f"finding max among current children for node: {current.get_loc()}")
+                for child in current.children: 
+                    print(f"Node has child: {child} with score {child.ucb_score()}")
+                #return None 
                 current = max(current.children, key=lambda child: child.ucb_score())
     
     def expand(self, node : MonteCarloTree.Node) -> MonteCarloTree.Node:
-        '''
-        explored_kernels = {child.kernel for child in node.children}
-        for kernel, path in get_reachable_kernels(self.env, self.max_step, node.loc, self.kernels[node.depth]):
-            if (kernel not in explored_kernels):
-                print(kernel, path)
-        '''
-        return MonteCarloTree.Node(self, node.depth + 1, (0, 0), False)
+        print(f"Expand called on {node}")
+        explored = set()
+        if node.children is not None:
+            explored = {child.get_loc() for child in node.children}
 
+        for path, loc in node.get_potential_moves():
+            if not any(same_position(loc, e) for e in explored):
+                # make a new child node at this location
+                new_child = MonteCarloTree.Node(
+                    tree=self,
+                    depth=node.depth + 1,
+                    loc=loc,
+                    is_kernel=False,  # or True if you're treating kernels specially
+                    path=path,
+                    parent=node
+                )
+                if node.children is None:
+                    node.children = []
+                node.children.append(new_child)
+                print(f"Added child: {new_child}")
+                file_name = f"map_from_{node.get_loc()[0]:.2f}_{node.get_loc()[1]:.2f}_to_{loc[0]:.2f}_{loc[1]:.2f}.png"
+                plot_move(self.shapely_map, self.shapely_obstacles, self.shapely_guard_positions[new_child.depth], Point(node.get_loc()), self.shadows[new_child.depth], Point(loc), path, save_plot=True, file_name=file_name)
+                return new_child
+        
+        raise RuntimeError("Expand was called on a fully-expanded node")
 
     def evaluate(self, node : MonteCarloTree.Node):
         '''
@@ -80,21 +105,25 @@ class MonteCarloTree:
         - how far away is this point from the guard 
         - what is the depth of the kernel? (this would only apply if i make it so that each node is a kernel)
         '''
-        plot_move(self.map, self.obstacles, self.guard_positions[node.depth-1], node.parent.loc, self.shadows[node.depth-1], node.loc, node.path)
-        return
+        return 1
     
     def backpropagate(self, node : MonteCarloTree.Node, result):
-        return
+        current = node
+        while current is not None:
+            current.visits += 1
+            current.score += result
+            print(f"Backpropagating to {current}")
+            current = current.parent
     
     def run(self):
-        selected = self.select()
-        if (selected is None):
-            print("Found optimal path!")
-            return True
-        
-        #result = self.evaluate(selected)
-        #self.backpropagate(selected, result)
-        return False
+        while True:
+            selected = self.select()
+            if (selected is None):
+                print("Found optimal path!")
+                return
+            
+            result = self.evaluate(selected)
+            self.backpropagate(selected, result)
 
     class Node:
         '''
@@ -116,7 +145,7 @@ class MonteCarloTree:
                 kernel_depth : Optional[int] = None, 
                 path : Optional[LineString] = None,
                 parent : Optional[MonteCarloTree.Node] = None,
-                children : List[MonteCarloTree.Node] = [],
+                children : Optional[List[MonteCarloTree.Node]] = None,
                 potential_moves : Optional[List[Tuple[LineString, Tuple[float, float]]]] = None,
             ):
             self.tree = tree
@@ -135,6 +164,10 @@ class MonteCarloTree:
             # compute if this node is in shadow?
 
         def ucb_score(self):
+            if self.visits == 0:
+                return float("inf")  # force exploration
+            if (self.parent is None): # at the root
+                return self.score/self.visits
             exploitation = self.score / self.visits
             exploration = MonteCarloTree.c * math.sqrt(
                 math.log(self.parent.visits) / self.visits
@@ -144,23 +177,25 @@ class MonteCarloTree:
         def __str__(self) -> str:
             return f"Node (loc=({self.loc[0]:.2f}, {self.loc[1]:.2f}), depth={self.depth})"
         
-        def get_potential_moves(self) -> List[Tuple[LineString, Tuple[float, float]]]:
+        def get_loc(self) -> Tuple[float, float]:
+            return self.loc
+        
+        def get_potential_moves(self, prune_tol: float = 0.1) -> List[Tuple[LineString, Tuple[float, float]]]:
             """
             Compute all possible moves from the current node.
 
             - If the shortest path to a kernel is <= max_step, add the kernel location.
             - If the path is longer, add the point along the path at max_step distance.
+            - Prune moves that are within `prune_tol` distance of one another.
             """
-            print("Called get potential moves")
+
             if (self.potential_moves is None):
-                print("computing potential moves")
                 moves = []
                 if (self.depth == len(self.tree.shadows)-1):
                     return moves
                 
-                for kernel in self.tree.kernels[self.depth]: 
+                for kernel in self.tree.kernels[self.depth+1]: 
                     target = kernel.get_coords()
-                    print(f"Finding path to target {target}")
                     path, length = self.tree.env.find_shortest_path(self.loc, target)
                     if not path or length is None:
                         continue
@@ -168,16 +203,34 @@ class MonteCarloTree:
                     line = LineString(path)
                     if length <= self.tree.max_step:
                         # Entire kernel is reachable
-                        moves.append((line, target))
+                        candidate =(line, target)
                     else:
                         # Take a point along the path at max_step distance
                         pt = line.interpolate(self.tree.max_step)
-                        moves.append((line, (pt.x, pt.y)))
-
+                        # Build truncated path: from start → pt
+                        truncated_coords = []
+                        dist_so_far = 0.0
+                        for i in range(len(path) - 1):
+                            seg = LineString([path[i], path[i + 1]])
+                            seg_len = seg.length
+                            if dist_so_far + seg_len >= self.tree.max_step:
+                                # Cut inside this segment
+                                remaining = self.tree.max_step - dist_so_far
+                                cut_pt = seg.interpolate(remaining)
+                                truncated_coords.append((cut_pt.x, cut_pt.y))
+                                break
+                            else:
+                                truncated_coords.append(path[i + 1])
+                                dist_so_far += seg_len
+                        truncated_line = LineString([path[0]] + truncated_coords)
+                        candidate = (truncated_line, (pt.x, pt.y))
+                    too_close = False
+                    for _, existing_pt in moves:
+                        if math.dist(existing_pt, candidate[1]) < prune_tol:
+                            too_close = True
+                            break
+                    if not too_close:
+                        moves.append(candidate)
                 self.potential_moves = moves
-                i = 1
-                for move in self.potential_moves:
-                    plot_move(self.tree.shapely_map, self.tree.shapely_obstacles, self.tree.shapely_guard_positions[self.depth], Point(self.loc), self.tree.shadows[self.depth], Point(move[1]), move[0], save_plot=True, file_name=f"map_from_root_to_kernel_{i}")
-                    i += 1
 
             return self.potential_moves
