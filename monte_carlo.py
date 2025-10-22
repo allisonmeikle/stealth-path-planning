@@ -1,49 +1,32 @@
 from __future__ import annotations
+
+import math
+
 from typing import List, Optional, Tuple
 from shapely.geometry.base import BaseGeometry
 from shapely.geometry import Point, Polygon, MultiPolygon, LineString
-from extremitypathfinder import PolygonEnvironment
 
-from kernel import find_kernels, Kernel
-from polygon_helpers import *
+from characters import *
+from map import *
 from plot_helper import *
 from helpers import *
-
-import math
 
 class MonteCarloTree: 
     c = math.sqrt(2)
 
-    '''
-    Initializes a MonteCarloTree to run MCTS on.
+    def __init__(self, map: Map, player: Player, guard: Guard):
+        self._map = map
+        self._player = player
+        self._guard = guard
 
-    Args:
-        map: The outer-boundary of the map, defined as a list of (x, y) coordinates in counter-clockwise order.
-        obstacles: A list of obstacles inside of the map. Each obstacle is a list of (x, y) coordinates in clockwise order.
-        player_start_pos: (x, y) coordinate of where the player starts in the map.
-        guard_positions: A list of the guard's positions as (x, y) coordinates at each step throughout the game. 
-        max_step: The maximum distance a player can move in one step. 
+        self.root = MonteCarloTree.Node(self, 0, player.get_start_pos(), False)
+        self.max_depth = len(guard.get_path()) - 1
 
-    '''
-    def __init__(self, map: List[Tuple[float, float]], obstacles: List[List[Tuple[float, float]]], player_start_pos: Tuple[float, float], guard_positions: List[Tuple[float, float]], max_step: float):
-        self.shapely_map = Polygon(map)
-        self.shapely_obstacles = []
-        for obstacle in obstacles:
-            self.shapely_obstacles.append(Polygon(obstacle))
-
-        self.shapely_guard_positions = []
-        for position in guard_positions:
-            self.shapely_guard_positions.append(Point(position))
-
-        self.max_step = max_step
-        self.shadows = compute_shadows(self.shapely_map, self.shapely_obstacles, self.shapely_guard_positions)
-        self.kernels = compute_kernels(self.shadows, 0.01)
-        self.root = MonteCarloTree.Node(self, 0, player_start_pos, False)
-
-        # Initialize PolygonEnvironment for computing shortest paths btw points
-        self.env = PolygonEnvironment()
-        self.env.store(map, obstacles, True)
-        self.env.prepare()
+    def get_max_step(self):
+        return self._player.get_max_step()
+    
+    def get_shortest_path(self, pt1: Tuple[float, float], pt2: Tuple[float, float]) -> Tuple[List[Tuple[float, float]], float]:
+        return self._map.get_shortest_path(pt1, pt2)
         
     def select(self) -> Optional[MonteCarloTree.Node]:
         current = self.root
@@ -90,8 +73,8 @@ class MonteCarloTree:
                     node.children = []
                 node.children.append(new_child)
                 print(f"Added child: {new_child}")
-                file_name = f"map_from_{node.get_loc()[0]:.2f}_{node.get_loc()[1]:.2f}_to_{loc[0]:.2f}_{loc[1]:.2f}.png"
-                plot_move(self.shapely_map, self.shapely_obstacles, self.shapely_guard_positions[new_child.depth], Point(node.get_loc()), self.shadows[new_child.depth], Point(loc), path, new_child.depth, save_plot=True, file_name=file_name)
+                #file_name = f"map_from_{node.get_loc()[0]:.2f}_{node.get_loc()[1]:.2f}_to_{loc[0]:.2f}_{loc[1]:.2f}.png"
+                #plot_move(self.shapely_map, self.shapely_obstacles, self.shapely_guard_positions[new_child.depth], Point(node.get_loc()), self.shadows[new_child.depth], Point(loc), path, new_child.depth-1, save_plot=True, file_name=file_name)
                 return new_child
         
         raise RuntimeError("Expand was called on a fully-expanded node")
@@ -104,6 +87,9 @@ class MonteCarloTree:
         - how many reachable kernels are there from this point
         - how far away is this point from the guard 
         - what is the depth of the kernel? (this would only apply if i make it so that each node is a kernel)
+
+        find distance to nearest shadow
+        find distance to nearest kernel
         '''
         return 1
     
@@ -120,6 +106,7 @@ class MonteCarloTree:
             selected = self.select()
             if (selected is None):
                 print("Found optimal path!")
+                plot_paths(self)
                 return
             
             result = self.evaluate(selected)
@@ -181,56 +168,65 @@ class MonteCarloTree:
             return self.loc
         
         def get_potential_moves(self, prune_tol: float = 0.1) -> List[Tuple[LineString, Tuple[float, float]]]:
-            """
-            Compute all possible moves from the current node.
-
-            - If the shortest path to a kernel is <= max_step, add the kernel location.
-            - If the path is longer, add the point along the path at max_step distance.
-            - Prune moves that are within `prune_tol` distance of one another.
-            """
-
             if (self.potential_moves is None):
                 moves = []
-                if (self.depth == len(self.tree.shadows)-1):
+                if (self.depth == self.tree.max_depth):
                     return moves
                 
-                for kernel in self.tree.kernels[self.depth+1]: 
-                    target = kernel.get_coords()
-                    path, length = self.tree.env.find_shortest_path(self.loc, target)
-                    if not path or length is None:
-                        continue
+                # Compute moves towards kernels
+                # Map.Kernel.get_moves_towards_kernels()
 
-                    line = LineString(path)
-                    if length <= self.tree.max_step:
-                        # Entire kernel is reachable
-                        candidate =(line, target)
-                    else:
-                        # Take a point along the path at max_step distance
-                        pt = line.interpolate(self.tree.max_step)
-                        # Build truncated path: from start → pt
-                        truncated_coords = []
-                        dist_so_far = 0.0
-                        for i in range(len(path) - 1):
-                            seg = LineString([path[i], path[i + 1]])
-                            seg_len = seg.length
-                            if dist_so_far + seg_len >= self.tree.max_step:
-                                # Cut inside this segment
-                                remaining = self.tree.max_step - dist_so_far
-                                cut_pt = seg.interpolate(remaining)
-                                truncated_coords.append((cut_pt.x, cut_pt.y))
-                                break
+                # Compute brute force moves
+                num_directions = 8
+                for i in range(num_directions):
+                    angle = 2 * math.pi * i / num_directions
+                    x = self.loc[0] + self.tree.get_max_step() * math.cos(angle)
+                    y = self.loc[1] + self.tree.get_max_step() * math.sin(angle)
+                    target = (x, y)
+                    
+                    # Try to find a valid path to this point
+                    try:
+                        path, length = self.tree.get_shortest_path(self.loc, target)
+                        if path and length is not None:
+                            line = LineString(path)
+                            if length <= self.tree.get_max_step():
+                                candidate = (line, target)
                             else:
-                                truncated_coords.append(path[i + 1])
-                                dist_so_far += seg_len
-                        truncated_line = LineString([path[0]] + truncated_coords)
-                        candidate = (truncated_line, (pt.x, pt.y))
+                                # Take a point along the path at max_step distance
+                                pt = line.interpolate(self.tree.get_max_step())
+                                # Build truncated path
+                                truncated_coords = []
+                                dist_so_far = 0.0
+                                for j in range(len(path) - 1):
+                                    seg = LineString([path[j], path[j + 1]])
+                                    seg_len = seg.length
+                                    if dist_so_far + seg_len >= self.tree.get_max_step():
+                                        remaining = self.tree.get_max_step() - dist_so_far
+                                        cut_pt = seg.interpolate(remaining)
+                                        truncated_coords.append((cut_pt.x, cut_pt.y))
+                                        break
+                                    else:
+                                        truncated_coords.append(path[j + 1])
+                                        dist_so_far += seg_len
+                                truncated_line = LineString([path[0]] + truncated_coords)
+                                candidate = (truncated_line, (pt.x, pt.y))
+                            
+                            moves.append(candidate)
+                    except:
+                        # Skip if path cannot be found (e.g., target is outside map or in obstacle)
+                        continue
+                
+                # Prune moves: remove any that are within prune_tol of each other
+                pruned_moves = []
+                for candidate in moves:
                     too_close = False
-                    for _, existing_pt in moves:
+                    for _, existing_pt in pruned_moves:
                         if math.dist(existing_pt, candidate[1]) < prune_tol:
                             too_close = True
                             break
                     if not too_close:
-                        moves.append(candidate)
-                self.potential_moves = moves
+                        pruned_moves.append(candidate)
+                
+                self.potential_moves = pruned_moves
 
             return self.potential_moves

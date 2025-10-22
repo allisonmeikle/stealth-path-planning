@@ -126,7 +126,7 @@ def save_game_state_map(file_name, map_poly, obstacles, guard, player, plot_size
     plt.close()
 
 def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path, time_step, plot_size=(11, 7), save_plot=False, file_name=''):
-    os.makedirs('maps', exist_ok=True)
+    #os.makedirs('maps', exist_ok=True)
 
     plt.figure(figsize=plot_size)
     ax = plt.gca()
@@ -179,8 +179,96 @@ def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path,
     plt.title(f"Game Step with Guard, Player, Shadow, and Path (time_step = {time_step})")
     
     if save_plot:
-        out_path = os.path.join('maps', file_name)
-        plt.savefig(out_path, dpi=150)
+        #out_path = os.path.join('maps', file_name)
+        plt.savefig(file_name, dpi=150)
         plt.close()
     else: 
         plt.show()
+
+import os
+import matplotlib.pyplot as plt
+from shapely.geometry import Point
+
+def plot_paths(tree, base_dir="tree_paths"):
+    """
+    Traverse the MonteCarloTree and save plots of all root-to-leaf paths.
+    Each path gets its own directory under base_dir.
+    
+    Args:
+        tree: MonteCarloTree instance
+        base_dir: str, where to create directories for each path
+    """
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir)
+
+    def dfs(node, path_nodes, path_idx=[0]):
+        """
+        Depth-first traversal that collects all root-to-leaf paths.
+        path_nodes: list of nodes along the current path.
+        path_idx: single-element list to keep a counter across recursion.
+        """
+        path_nodes.append(node)
+
+        if not node.children:  # leaf
+            path_idx[0] += 1
+            path_dir = os.path.join(base_dir, f"path_{path_idx[0]}")
+            os.makedirs(path_dir, exist_ok=True)
+
+            # save a plot for each move in this path
+            for i in range(1, len(path_nodes)):
+                parent = path_nodes[i - 1]
+                child = path_nodes[i]
+
+                file_name = os.path.join(
+                    path_dir,
+                    f"step_{i:02d}_from_{parent.loc[0]:.2f}_{parent.loc[1]:.2f}"
+                    f"_to_{child.loc[0]:.2f}_{child.loc[1]:.2f}.png"
+                )
+
+                # call your plotting helper
+                plot_move(
+                    tree.shapely_map,
+                    tree.shapely_obstacles,
+                    tree.shapely_guard_positions[child.depth],
+                    Point(parent.loc),
+                    tree.shadows[child.depth],
+                    Point(child.loc),
+                    child.path,
+                    i,
+                    save_plot=True,
+                    file_name=file_name
+                )
+        else:
+            # recurse into children
+            for child in node.children:
+                dfs(child, path_nodes.copy(), path_idx)
+
+    dfs(tree.root, [])
+
+import os
+from PIL import Image
+
+def make_gifs(base_dir="tree_paths", delay=200):
+    for path_dir in sorted(os.listdir(base_dir)):
+        full_path = os.path.join(base_dir, path_dir)
+        if not os.path.isdir(full_path):
+            continue
+        
+        images = []
+        for file in sorted(os.listdir(full_path)):
+            if file.endswith(".png"):
+                img = Image.open(os.path.join(full_path, file))
+                images.append(img)
+
+        if images:
+            gif_path = os.path.join(base_dir, f"{path_dir}.gif")
+            images[0].save(
+                gif_path,
+                save_all=True,
+                append_images=images[1:],
+                duration=delay,  # ms per frame
+                loop=0
+            )
+            print(f"Saved {gif_path}")
+
+make_gifs("tree_paths", delay=300)  # 0.3s per frame
