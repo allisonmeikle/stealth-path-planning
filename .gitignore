@@ -6,5 +6,5 @@ venv
 .DS_Store
 
 maps
-
 tree_paths
+plots

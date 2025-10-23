@@ -271,4 +271,4 @@ def make_gifs(base_dir="tree_paths", delay=200):
             )
             print(f"Saved {gif_path}")
 
-make_gifs("tree_paths", delay=300)  # 0.3s per frame
+#make_gifs("tree_paths", delay=300)  # 0.3s per frame

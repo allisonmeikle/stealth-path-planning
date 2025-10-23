@@ -20,7 +20,7 @@ class Map:
     _obstacles: List[List[Tuple[float, float]]]
     _shapely_obstacles: List[Polygon]
     _visibility_polygons: List[List[Polygon]]
-    _shadows: List[List[BaseGeometry]]
+    _shadows: List[MultiPolygon]
     _kernels: Optional[List[List[Kernel]]]
 
     def __init__(self, grid_size: Tuple[float, float], boundary: List[Tuple[float, float]], obstacles: List[List[Tuple[float, float]]], guards: List[Guard], player: Player):
@@ -98,8 +98,12 @@ class Map:
                     print(f"Warning: failed to compute visibility polygon at time {t} for guard at {guard_pos}: {e}")
                     continue  # skip this guard this timestep
 
-            vis_polys.extend(step_vis_polys)
+            vis_polys.append(step_vis_polys)
             shadow = map_free.difference(unary_union(step_vis_polys))
+            if shadow.geom_type == "Polygon":
+                shadow = MultiPolygon([shadow])
+            elif shadow.geom_type == "GeometryCollection":
+                shadow = MultiPolygon([g for g in shadow.geoms if g.geom_type == "Polygon"])
             shadows.append(shadow)
 
         self._visibility_polygons = vis_polys
@@ -109,13 +113,18 @@ class Map:
         try:
             boundary_poly = self._shapely_boundary
             obstacles_poly = self._shapely_obstacles
+
+            
             if self._player.get_radius() > 0:
                 # need to inflate the boundaries 
                 boundary_poly = boundary_poly.buffer(-self._player.get_radius())
                 obstacles_poly = [obstacle.buffer(self._player.get_radius()) for obstacle in obstacles_poly]
-                
-            boundary_coords = list(boundary_poly.exterior.coords)
-            obstacle_coords = [list(obstacle.exterior.coords) for obstacle in obstacles_poly]
+            
+            boundary_poly = orient(boundary_poly, sign=1.0)   # CCW
+            obstacles_poly = [orient(obs, sign=-1.0) for obs in obstacles_poly]  # CW
+
+            boundary_coords = list(boundary_poly.exterior.coords)[:-1]
+            obstacle_coords = [list(obstacle.exterior.coords)[:-1] for obstacle in obstacles_poly]
 
             self._polygon_env = PolygonEnvironment()
             self._polygon_env.store(boundary_coords, obstacle_coords, True)
@@ -133,11 +142,15 @@ class Map:
     def compute_kernels(self, step): 
         self._kernels = []
         for i in range(len(self._shadows)):
-            kernels = []
-            for shadow in self._shadows[i]:
-                kernels.extend(Map.Kernel.find_kernels(shadow, step, 0))
-            self._kernels.extend(kernels)
-        self._kernels = kernels
+            kernels = Map.Kernel.find_kernels(self._shadows[i], step, 0)
+            self._kernels.append(kernels)
+
+    def get_visibility_polygons(self):
+        """Return a deep copy of the visibility polygons to prevent external mutation."""
+        return [
+            [poly.buffer(0) for poly in timestep]  # shapely .buffer(0) clones geometry
+            for timestep in self._visibility_polygons
+        ]
 
     class Kernel:
         def __init__(self, coords: Tuple[float, float], depth: int):
@@ -172,18 +185,18 @@ class Map:
                 shrunk = shape.buffer(-step)
                 if shrunk.is_empty:
                     print(f"Polygon collapsed at depth {depth}, taking kernel point of last shape")
-                    return [Kernel(get_kernel_point(shape), depth)]
-                kernels.extend(find_kernels(shrunk, step, depth + 1))
+                    return [Map.Kernel(Map.Kernel.get_kernel_point(shape), depth)]
+                kernels.extend(Map.Kernel.find_kernels(shrunk, step, depth + 1))
                 return kernels
             
             # Composite type handling
             elif (shape.geom_type == 'MultiLineString'):
                 for line in shape.geoms:
-                    kernels.extend(find_kernels(line, step, depth + 1))
+                    kernels.extend(Map.Kernel.find_kernels(line, step, depth + 1))
                 return kernels
             elif (shape.geom_type == 'MultiPolygon'):
                 for poly in shape.geoms:
-                    kernels.extend(find_kernels(poly, step, depth + 1))
+                    kernels.extend(Map.Kernel.find_kernels(poly, step, depth + 1))
                 return kernels
             
             print("Unsupported geometry type:", shape.geom_type)

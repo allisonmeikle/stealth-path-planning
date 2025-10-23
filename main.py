@@ -3,7 +3,7 @@ from characters import *
 from map import *
 
 # Player parameters
-player = Player(0.5, 2.0, (1.5, 8.0))
+player = Player(0.1, 0.5, (1.5, 8.0))
 
 # Guard parameters
 guard_positions = [
@@ -35,3 +35,5 @@ map.compute_kernels(0.05)
 # Running MCTS
 monte_carlo_tree = MonteCarloTree(map, player, guard)
 result = monte_carlo_tree.run()
+MonteCarloTree.traverse_and_plot(monte_carlo_tree.root)
+#MonteCarloTree.Node.plot_move(monte_carlo_tree.root, plot_size=(11, 7))
