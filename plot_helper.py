@@ -4,6 +4,8 @@ from shapely.geometry import box
 from shapely.ops import unary_union
 from descartes import PolygonPatch
 
+from monte_carlo import *
+
 plt.style.use("classic")
 
 def add_polygon(ax, poly, **kwargs):
@@ -11,13 +13,8 @@ def add_polygon(ax, poly, **kwargs):
         return
     if poly.geom_type == "Polygon":
         if poly.is_valid and len(poly.exterior.coords) >= 3:
-            try:
-                patch = PolygonPatch(poly, **kwargs)
-                ax.add_patch(patch)
-            except Exception:
-                # fallback if PolygonPatch fails
-                x, y = poly.exterior.xy
-                ax.fill(x, y, **kwargs)
+            x, y = poly.exterior.xy
+            ax.fill(x, y, **kwargs)
     elif poly.geom_type == "MultiPolygon":
         for subpoly in poly.geoms:
             add_polygon(ax, subpoly, **kwargs)
@@ -245,30 +242,41 @@ def plot_paths(tree, base_dir="tree_paths"):
 
     dfs(tree.root, [])
 
-import os
-from PIL import Image
+import re
+import imageio.v2 as imageio
 
-def make_gifs(base_dir="tree_paths", delay=200):
-    for path_dir in sorted(os.listdir(base_dir)):
-        full_path = os.path.join(base_dir, path_dir)
-        if not os.path.isdir(full_path):
-            continue
-        
-        images = []
-        for file in sorted(os.listdir(full_path)):
-            if file.endswith(".png"):
-                img = Image.open(os.path.join(full_path, file))
-                images.append(img)
+def make_gifs(folder_path, output_name="animation.gif", duration=0.25, loop=True):
+    """
+    Combine numbered frame_XXX.png images in `folder_path` into a GIF.
+    Automatically sorts frames numerically and loops if desired.
+    """
+    # Collect frame paths
+    frames = [
+        os.path.join(folder_path, f)
+        for f in os.listdir(folder_path)
+        if f.endswith(".png")
+    ]
 
-        if images:
-            gif_path = os.path.join(base_dir, f"{path_dir}.gif")
-            images[0].save(
-                gif_path,
-                save_all=True,
-                append_images=images[1:],
-                duration=delay,  # ms per frame
-                loop=0
-            )
-            print(f"Saved {gif_path}")
+    # --- Sort numerically ---
+    frames.sort(key=lambda f: int(re.search(r"(\d+)", f).group()))
 
-#make_gifs("tree_paths", delay=300)  # 0.3s per frame
+    # Debug: check order
+    print("🧩 Frame order:", [os.path.basename(f) for f in frames])
+
+    # --- Read images ---
+    images = [imageio.imread(f) for f in frames]
+
+    # --- Create output path ---
+    output_path = os.path.join(folder_path, output_name)
+
+    # --- Save GIF ---
+    imageio.mimsave(
+        output_path,
+        images,
+        duration=duration,
+        loop=0 if loop else 1  # 0 = infinite loop
+    )
+
+    print(f"✅ Saved GIF → {output_path}")
+
+
