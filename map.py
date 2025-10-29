@@ -1,7 +1,9 @@
 from __future__ import annotations
 import imageio
 import math
+import numpy as np
 import os
+import random
 import visilibity as vis
 
 from typing import List, Optional, Tuple, Union
@@ -23,7 +25,7 @@ class Map:
     _shapely_boundary: Polygon
     _obstacles: List[List[Tuple[float, float]]]
     _shapely_obstacles: List[Polygon]
-    _visibility_polygons: List[List[Polygon]]
+    _visibility_polygons: List[MultiPolygon]
     _shadows: List[MultiPolygon]
     _kernels: Optional[List[List[Kernel]]]
 
@@ -90,20 +92,24 @@ class Map:
         map_free = self._shapely_boundary.difference(unary_union(self._shapely_obstacles))
 
         for t in range(self.get_num_timesteps()):
-            step_vis_polys = []
+            polys = []
             for guard in self._guards:
                 guard_pos = guard.get_path()[t]
                 try:
                     V = vis.Visibility_Polygon(vis.Point(*guard_pos), visibility_env, 1e-5)
                     coords = [(V[i].x(), V[i].y()) for i in range(V.n())]
-                    poly = Polygon(coords).buffer(0)
-                    step_vis_polys.append(poly)
+                    poly = map_free.intersection(Polygon(coords))
+                    if poly.is_valid and not poly.is_empty:
+                        polys.append(poly)
+                    else: 
+                        print(f"Rejected polygon {poly} for timestep {t}")
                 except Exception as e:
                     print(f"Warning: failed to compute visibility polygon at time {t} for guard at {guard_pos}: {e}")
                     continue  # skip this guard this timestep
+            multi_poly = MultiPolygon(polys)
+            vis_polys.append(multi_poly)
 
-            vis_polys.append(step_vis_polys)
-            shadow = map_free.difference(unary_union(step_vis_polys))
+            shadow = map_free.difference(multi_poly)
             interior_free = self._shapely_boundary.buffer(-1e-3) 
             shadow = shadow.intersection(interior_free)
             if shadow.geom_type == "Polygon":
@@ -137,7 +143,7 @@ class Map:
         
         except Exception as e:
             raise RuntimeError(f"Failed to build pathfinding environment: {e}")
-        
+
     def save_map_states(self, fig_size = (8,8), save_dir = "plots/map_states"):
         os.makedirs(save_dir, exist_ok=True)
 
@@ -243,9 +249,12 @@ class Map:
         output_gif = os.path.join(save_dir, f"kernel_evolution_t{time_step}.gif")
         imageio.mimsave(output_gif, images, duration=1/fps)
         print(f"✅ Saved GIF → {output_gif}")
+
+    def is_valid_position(self, pt: Tuple[int|float, int|float]):
+        return self._polygon_env.within_map(np.asarray(pt))
     
     def get_player_start_pos(self):
-        return self._player.get_start_pos()
+        return self._player.get_start_pos(self)
     
     def get_player_max_step(self):
         return self._player.get_max_step()
@@ -262,27 +271,30 @@ class Map:
         return len(self._guards[0].get_path())
         
     def get_shortest_path(self, pt1: Tuple[float, float], pt2: Tuple[float, float]) -> Tuple[List[Tuple[float, float]], float]:
-        print(f"Finding path from {pt1} to {pt2}")
+        #print(f"Finding path from {pt1} to {pt2}")
         path, length = self._polygon_env.find_shortest_path(pt1, pt2)
         if (not path or not length):
             raise RuntimeError(f"Could not find path between {pt1} and {pt2}.")
         return path, length
     
-    def get_visibility_polygons(self):
-        """Return a deep copy of the visibility polygons to prevent external mutation."""
-        return [
-            [poly.buffer(0) for poly in timestep]  # shapely .buffer(0) clones geometry
-            for timestep in self._visibility_polygons
-        ]
+    def get_visibility_polygon(self, timestep: int) -> MultiPolygon:
+        if not(0 <= timestep < self.get_num_timesteps()):
+            raise IndexError(f"Could not retrieve visibility polygon for invalid timetep {timestep}")
+        return MultiPolygon([poly.buffer(0) for poly in self._visibility_polygons[timestep].geoms])
     
-    def get_kernels(self, time_step: int):
+    def get_shadow(self, timestep: int) -> MultiPolygon:
+        if not(0 <= timestep < self.get_num_timesteps()):
+                raise IndexError(f"Could not retrieve shadow for invalid timetep {timestep}")
+        return MultiPolygon([poly.buffer(0) for poly in self._shadows[timestep].geoms])
+    
+    def get_kernels(self, timestep: int):
         if self._kernels is None:
             self.compute_kernels(0.01)
         
-        if not(0 <= time_step < self.get_num_timesteps()):
-            raise IndexError(f"Could not retrieve kernels for invalid timetep {time_step}")
+        if not(0 <= timestep < self.get_num_timesteps()):
+            raise IndexError(f"Could not retrieve kernels for invalid timetep {timestep}")
         
-        return [Map.Kernel(k.get_coords(), k.get_depth()) for k in self._kernels[time_step]]
+        return [Map.Kernel(k.get_coords(), k.get_depth()) for k in self._kernels[timestep]]
 
     def compute_kernels(self, step_factor: float): 
         self._kernels = []

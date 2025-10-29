@@ -22,14 +22,14 @@ class MonteCarloTree:
 
         # Score hyperparameters
         self.alpha = 1 # for shadow score
-        self.beta = 1 # for guard distance score
+        self.beta = 0.5 # for guard distance score
         # maybe scale this down, wont change a lot with small steps
         self.gamma = -1 # for kernel distance score
         
     def select(self) -> Optional[MonteCarloTree.Node]:
         current = self.root
         while True:
-            print("Current node in selection loop: ", current)
+            #print("Current node in selection loop: ", current)
 
             if (current._depth >= self.max_depth):
                 print("Selection ended on a leaf, returning None")
@@ -44,14 +44,14 @@ class MonteCarloTree:
             if num_potential_moves > num_children:
                 return self.expand(current)
             else: 
-                print(f"finding max among current children for node: {current.get_loc()}")
-                for child in current._children: 
-                    print(f"Node has child: {child} with score {child.ucb_score()}")
+                #print(f"finding max among current children for node: {current.get_loc()}")
+                #for child in current._children: 
+                    #print(f"Node has child: {child} with score {child.ucb_score()}")
                 #return None 
                 current = max(current._children, key=lambda child: child.ucb_score())
     
     def expand(self, node : MonteCarloTree.Node) -> MonteCarloTree.Node:
-        print(f"Expand called on {node}")
+        #print(f"Expand called on {node}")
         explored = set()
         if node._children is not None:
             explored = {child.get_loc() for child in node._children}
@@ -70,7 +70,7 @@ class MonteCarloTree:
                 if node._children is None:
                     node._children = []
                 node._children.append(new_child)
-                print(f"Added child: {new_child}")
+                #print(f"Added child: {new_child}")
                 #file_name = f"map_from_{node.get_loc()[0]:.2f}_{node.get_loc()[1]:.2f}_to_{loc[0]:.2f}_{loc[1]:.2f}.png"
                 #plot_move(self.shapely_map, self.shapely_obstacles, self.shapely_guard_positions[new_child.depth], Point(node.get_loc()), self.shadows[new_child.depth], Point(loc), path, new_child.depth-1, save_plot=True, file_name=file_name)
                 return new_child
@@ -86,7 +86,7 @@ class MonteCarloTree:
             return 0.0 # score is 0 if the player is visible
         
         # find shortest distance to visible area
-        vis_area = unary_union(self._map.get_visibility_polygons()[node._depth])
+        vis_area = self._map.get_visibility_polygon(node._depth)
         shadow_score = self.alpha * p_pt.distance(vis_area)
         
         # find distance from the player to guard (length of shortest path)
@@ -216,7 +216,7 @@ class MonteCarloTree:
                 moves.extend(self.get_moves_towards_kernels())
 
                 # Compute brute force moves
-                moves.extend(self.get_brute_force_moves())
+                #moves.extend(self.get_brute_force_moves())
                 
                 # Prune moves: remove any that are within prune_tol of each other
                 pruned_moves = []
@@ -266,8 +266,8 @@ class MonteCarloTree:
                                     dist_so_far += seg_len
                             truncated_line = LineString([path[0]] + truncated_coords)
                             candidate = (truncated_line, (pt.x, pt.y))
-                        
-                        moves.append(candidate)
+                        if self._map.is_valid_position(candidate[1]):
+                            moves.append(candidate)
                 except:
                     # Skip if path cannot be found (e.g., target is outside map or in obstacle)
                     continue
@@ -276,6 +276,8 @@ class MonteCarloTree:
         def get_moves_towards_kernels(self):
             moves = []
             for kernel in self._map.get_kernels(self._depth+1):
+                if same_position(self._loc, kernel.get_coords()):
+                    continue
                 target = kernel.get_coords()
                 path, length = self._map.get_shortest_path(self._loc, target)
                 if not path or not length:
@@ -304,7 +306,8 @@ class MonteCarloTree:
                             truncated_coords.append(path[i + 1])
                             dist_so_far += seg_len
                     truncated_line = LineString([path[0]] + truncated_coords)
-                    moves.append((truncated_line, (pt.x, pt.y)))
+                    if self._map.is_valid_position((pt.x, pt.y)):
+                        moves.append((truncated_line, (pt.x, pt.y)))
             return moves
         
         def plot_move(self, plot_size = (11, 7), save_dir = 'plots_new'):
