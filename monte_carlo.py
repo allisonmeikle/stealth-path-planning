@@ -163,6 +163,16 @@ class MonteCarloTree:
         dfs(self.root)
         print(f"🌟 Best leaf at depth {best_node._depth} with score {best_score:.3f}")
         return best_node
+    
+    @staticmethod
+    def get_path_to_root(node: "MonteCarloTree.Node") -> list["MonteCarloTree.Node"]:
+        path = []
+        cur = node
+        while cur is not None:
+            path.append(cur)
+            cur = cur._parent
+        path.reverse()
+        return path
 
     class Node:
         def __init__(

@@ -1,126 +1,91 @@
-import math
+import argparse
+import json
+import os.path
 from monte_carlo import MonteCarloTree
 from characters import *
 from map import *
 from plot_helper import *
 
-# Map parameters
-'''
-Initial map we used
+CUR_DIR = os.path.dirname(__file__)
 
-guard_positions = [
-    (16.0, 5.0),
-    (16.0, 3.5),
-    (15.515, 1.560),
-    (13.516, 1.5),
-    (11.516, 1.5)
-]
+def is_valid_position(pos):
+    return isinstance(pos, list) and len(pos) == 2 and all(isinstance(x, (int, float)) for x in pos)
 
-boundary = [
-    (3.0, 0.0), (5.0, 0.0), (5.0, 1.0), (18.0, 1.0),
-    (18.0, 10.0), (19.0, 10.0), (19.0, 11.0),
-    (15.0, 11.0), (15.0, 10.0), (14.0, 10.0), (14.0, 11.0), (0.0, 11.0),
-    (0.0, 7.0), (3.0, 7.0), (3.0, 9.0), (6.0, 9.0), (6.0, 3.0), (3.0, 3.0)
-]
+def is_valid_guard(guard):
+    print(f"Checking is valid guard for {guard}")
+    if not isinstance(guard, dict):
+        return False
+    
+    radius = guard.get("radius")
+    if not radius or not isinstance(radius, float):
+        return False
+    print("radius is valid")
+    speed = guard.get("speed")
+    if not speed or not isinstance(speed, float):
+        return False
+    print("speed is valid")
+    positions = guard.get("positions")
+    if not positions or not isinstance(positions, list) or not all(is_valid_position(x) for x in positions):
+        return False
+    
+    return True
 
-obstacles = [
-    [(7.0, 4.0), (7.0, 6.0), (9.0, 6.0), (9.0, 4.0)],
-    [(8.0, 7.0), (8.0, 9.0), (9.0, 9.0), (9.0, 8.0), (10.0, 8.0), (10.0, 9.0), (11.0, 9.0), (11.0, 7.0)],
-    [(14.0, 6.0), (14.0, 8.0), (16.0, 8.0), (16.0, 6.0)],
-    [(11.0, 2.0), (11.0, 4.0), (15.0, 4.0), (15.0, 2.0), (14.0, 2.0), (14.0, 3.0), (12.0, 3.0), (12.0, 2.0)]
-]
-grid_size = (20, 12)
-'''
+def load_level_info(file_name):
+    full_path = os.path.join(CUR_DIR, 'maps', file_name)
+    
+    if not os.path.exists(full_path):
+        raise FileNotFoundError(f"Level file not found: {full_path}")
+    try:
+        with open(full_path, "r") as f:
+            level = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse JSON in {file_name}: {e}")
+    
+    # Player info
+    player_start = level.get("player_start")
+    if player_start and not is_valid_position(player_start):
+        raise ValueError(f"Player start parameter {player_start} is invalid")
+    
+    player_radius = level.get("player_radius")
+    if not player_radius or not isinstance(player_radius, float):
+        raise ValueError(f"Player radius is invalid, must be of type float")
+    
+    player_speed = level.get("player_speed")
+    if not player_speed or not isinstance(player_speed, float):
+        raise ValueError(f"Player speed is invalid, must be of type float")
+    
+    player = Player(player_radius, player_speed, player_start)
 
-'''
-Square map with centre obstacle
-boundary = [(0,0), (10,0), (10,10), (0,10)]  # CCW (outer boundary)
-obstacles = [[(4,4), (4,6), (6,6), (6,4)]]   # CW (inner obstacle)
-grid_size = (10, 10)
-# center of the obstacle
-cx, cy = 5, 5
-radius = 2.0        # 2 units away from center
-step_size = 0.5
-num_points = int((2 * math.pi * radius) / step_size)
+    # Guard(s) info 
+    guards = level.get("guards")
+    if not guards or not isinstance(guards, list) or not all(is_valid_guard(guard) for guard in guards):
+        raise ValueError("Guard(s) parameter missing or invalid")
+    
+    guard_objs = []
+    for guard in guards:
+        guard_objs.append(Guard(guard.get("radius"), guard.get("speed"), guard.get("positions")))
 
-guard_positions = [
-    (cx + radius * math.cos(theta), cy + radius * math.sin(theta))
-    for theta in [i * (2 * math.pi / num_points) for i in range(num_points)]
-]
-'''
+    # Map info
+    grid_size = level.get("grid_size")
+    if not grid_size or not is_valid_position(grid_size):
+        raise ValueError("Grid size parameter missing or invalid")
 
-"""
-E-shaped map: solid boundary, no obstacles, player moves inside the 'E' corridors.
-The open side of the 'E' faces right.
-"""
+    boundary = level.get("boundary")
+    if not boundary or not all(is_valid_position(x) for x in boundary):
+        raise ValueError("Map boundary parameter missing or invalid")
 
-"""
-Simple E-shaped map, open to the right.
-Single outer boundary, CCW, no self-intersection.
-"""
+    obstacles = level.get("obstacles")
+    if not obstacles or not isinstance(obstacles, list) or not all(isinstance(poly, list) and all(is_valid_position(p) for p in poly) for poly in obstacles):
+        raise ValueError("Map obstacles parameter missing or invalid")
+    
+    map = Map(grid_size, boundary, obstacles, guard_objs, player)
 
-grid_size = (10, 10)
-
-boundary = [
-    (0, 10),
-    (0, 0),
-    (2, 0),
-    (2, 8),
-    (4, 8),
-    (4, 0),
-    (6, 0),
-    (6, 8),
-    (8, 8),
-    (8, 0),
-    (10, 0),
-    (10, 10)
-]
-
-obstacles = []
-
-guard_radius = 0.5
-step = 0.5
-
-guard_positions = []
-
-# Limits of the E-shaped region
-xmin, xmax = 5 + guard_radius, 10 - guard_radius
-ymin, ymax = 5 + guard_radius, 10 - guard_radius
-
-# --- Down middle corridor (x = 5) ---
-x_mid = 5.0
-for y in [ymax - i * step for i in range(int((ymax - ymin) / step) + 1)]:
-    guard_positions.append((x_mid, y))
-
-
-# --- Back up middle corridor (x = 5) ---
-for y in [ymin + i * step for i in range(int((ymax - ymin) / step) + 1)]:
-    guard_positions.append((x_mid, y))
-
-# --- Move horizontally to left corridor (y = top, constant height) ---
-y_top = ymax
-for x in [x_mid - i * step for i in range(int((x_mid - xmin) / step) + 1)]:
-    guard_positions.append((x, y_top))
-
-
-player = Player(0.1, 0.5, (1, 9))
-guard = Guard(0.5, 2.0, guard_positions)
-map = Map(grid_size, boundary, obstacles, [guard], player)
-map.compute_kernels(0.01)
-#map.visualize_kernel_evolution(5)
-#map.save_map_states()
-
-
-# Running MCTS
-monte_carlo_tree = MonteCarloTree(map)
-result = monte_carlo_tree.run()
-#MonteCarloTree.traverse_and_plot(monte_carlo_tree.root)
-#MonteCarloTree.Node.plot_move(monte_carlo_tree.root, plot_size=(11, 7))
+    return player, guard_objs, map
 
 def visualize_best_path(tree: MonteCarloTree, save_dir="plots/best_path_gif", duration=0.25):
     os.makedirs(save_dir, exist_ok=True)
     best_leaf = tree.get_best_leaf()
-    path_nodes = get_path_to_root(best_leaf)
+    path_nodes = MonteCarloTree.get_path_to_root(best_leaf)
 
     frames = []
     for i, node in enumerate(path_nodes):
@@ -155,15 +120,18 @@ def visualize_best_path(tree: MonteCarloTree, save_dir="plots/best_path_gif", du
         plt.close(fig)
         frames.append(frame_path)
 
-def get_path_to_root(node: "MonteCarloTree.Node") -> list["MonteCarloTree.Node"]:
-    path = []
-    cur = node
-    while cur is not None:
-        path.append(cur)
-        cur = cur._parent
-    path.reverse()
-    return path
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("level", help="Name of the JSON file in the ./maps directory")
+    args = parser.parse_args()
 
-# Combine into GIF
-visualize_best_path(monte_carlo_tree, duration=0.3)
-make_gifs('plots/best_path_gif')
+    player, guards, map = load_level_info(args.level)
+
+    map.plot_shadow_comparison('plots/shadow_comparison1')
+    #monte_carlo_tree = MonteCarloTree(map)
+    #result = monte_carlo_tree.run()
+    #visualize_best_path(monte_carlo_tree, duration=0.3)
+    #make_gifs('plots/best_path_gif')    
+
+if __name__ == "__main__":
+    main()

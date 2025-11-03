@@ -8,16 +8,20 @@ from monte_carlo import *
 
 plt.style.use("classic")
 
-def add_polygon(ax, poly, **kwargs):
-    if poly.is_empty:
+def add_polygon(ax, geom, fc="blue", ec="black", alpha=0.4, **kwargs):
+    from shapely.geometry import Polygon, MultiPolygon
+    if geom.is_empty:
         return
-    if poly.geom_type == "Polygon":
-        if poly.is_valid and len(poly.exterior.coords) >= 3:
-            x, y = poly.exterior.xy
-            ax.fill(x, y, **kwargs)
-    elif poly.geom_type == "MultiPolygon":
-        for subpoly in poly.geoms:
-            add_polygon(ax, subpoly, **kwargs)
+    if isinstance(geom, Polygon):
+        x, y = geom.exterior.xy
+        ax.fill(x, y, fc=fc, ec=ec, alpha=alpha, **kwargs)
+        for hole in geom.interiors:
+            hx, hy = zip(*hole.coords)
+            ax.fill(hx, hy, fc="dimgray", ec=ec)
+    elif isinstance(geom, MultiPolygon):
+        for g in geom.geoms:
+            add_polygon(ax, g, fc=fc, ec=ec, alpha=alpha, **kwargs)
+
 
 def plot_shadow_polygon(plot_size, map_poly, obstacles, guard, player, shadow_area, kernels, save_plot = False, file_name = '') :
     os.makedirs('maps', exist_ok=True)

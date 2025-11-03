@@ -27,7 +27,9 @@ class Map:
     _shapely_obstacles: List[Polygon]
     _visibility_polygons: List[MultiPolygon]
     _shadows: List[MultiPolygon]
+    _shadows_w_obs: List[MultiPolygon]
     _kernels: Optional[List[List[Kernel]]]
+    _kernels_w_obs: Optional[List[List[Kernel]]]
 
     def __init__(self, grid_size: Tuple[int|float, int|float], boundary: List[Tuple[int|float, int|float]], obstacles: List[List[Tuple[int|float, int|float]]], guards: List[Guard], player: Player):
         # Validate grid size
@@ -89,7 +91,7 @@ class Map:
 
         vis_polys = []
         shadows = []
-        map_free = self._shapely_boundary.difference(unary_union(self._shapely_obstacles))
+        shadows_w_obs = []
 
         for t in range(self.get_num_timesteps()):
             polys = []
@@ -98,28 +100,45 @@ class Map:
                 try:
                     V = vis.Visibility_Polygon(vis.Point(*guard_pos), visibility_env, 1e-5)
                     coords = [(V[i].x(), V[i].y()) for i in range(V.n())]
-                    poly = map_free.intersection(Polygon(coords))
+                    poly = Polygon(coords)
                     if poly.is_valid and not poly.is_empty:
                         polys.append(poly)
-                    else: 
-                        print(f"Rejected polygon {poly} for timestep {t}")
                 except Exception as e:
                     print(f"Warning: failed to compute visibility polygon at time {t} for guard at {guard_pos}: {e}")
                     continue  # skip this guard this timestep
+            
             multi_poly = MultiPolygon(polys)
             vis_polys.append(multi_poly)
 
+            map_free = Polygon(
+                self._shapely_boundary.exterior.coords,
+                holes=[obs.exterior.coords for obs in self._shapely_obstacles]
+            )
+
             shadow = map_free.difference(multi_poly)
+            shadow = shadow.difference(unary_union(self._shapely_obstacles)) 
             interior_free = self._shapely_boundary.buffer(-1e-3) 
             shadow = shadow.intersection(interior_free)
+
+            # Ensure interior holes (obstacles) are correctly oriented (CW)
             if shadow.geom_type == "Polygon":
+                shadow = orient(shadow, sign=1.0)
                 shadow = MultiPolygon([shadow])
+            elif shadow.geom_type == "MultiPolygon":
+                shadow = MultiPolygon([orient(s, sign=1.0) for s in shadow.geoms])
             elif shadow.geom_type == "GeometryCollection":
-                shadow = MultiPolygon([g for g in shadow.geoms if g.geom_type == "Polygon"])
+                shadow = MultiPolygon([orient(g, sign=1.0) for g in shadow.geoms if g.geom_type == "Polygon"])
             shadows.append(shadow)
+
+            # Add interior obstacles touching the shadow back into the shadow
+            for obs in self._shapely_obstacles:
+                if shadow.intersects(obs):
+                    shadow = shadow.union(obs)
+            shadows_w_obs.append(shadow)
 
         self._visibility_polygons = vis_polys
         self._shadows = shadows
+        self._shadows_w_obs = shadows_w_obs
 
     def build_pathfinding_environment(self):
         try:
@@ -271,7 +290,7 @@ class Map:
         return len(self._guards[0].get_path())
         
     def get_shortest_path(self, pt1: Tuple[float, float], pt2: Tuple[float, float]) -> Tuple[List[Tuple[float, float]], float]:
-        #print(f"Finding path from {pt1} to {pt2}")
+        print(f"Finding path from {pt1} to {pt2}")
         path, length = self._polygon_env.find_shortest_path(pt1, pt2)
         if (not path or not length):
             raise RuntimeError(f"Could not find path between {pt1} and {pt2}.")
@@ -287,20 +306,115 @@ class Map:
                 raise IndexError(f"Could not retrieve shadow for invalid timetep {timestep}")
         return MultiPolygon([poly.buffer(0) for poly in self._shadows[timestep].geoms])
     
+    def find_kernels(self, shape: BaseGeometry, step_factor: float, depth: int): 
+        kernels = []
+        # Base case(s)
+        if shape.is_empty:
+            return kernels
+        elif (shape.geom_type == 'LineString'):
+            mid_pt = shape.interpolate(0.5, normalized=True)
+            for pt in (shape.coords[0], (mid_pt.x, mid_pt.y), shape.coords[-1]):
+                if self.is_valid_position(pt):
+                    kernels.append(Map.Kernel(pt, depth))                
+                return kernels
+
+        # Recursive steps
+        elif (shape.geom_type == 'MultiPolygon'):
+            for subpoly in shape.geoms:
+                return self.find_kernels(subpoly, step_factor, depth + 1)
+        elif (shape.geom_type == 'Polygon'):
+            adaptive_step = max(step_factor * math.sqrt(shape.area), 0.01)
+            shrunk = shape.buffer(-adaptive_step)
+
+            # Handle base-cases here too before we lose the shape
+            if shrunk.is_empty or shrunk.equals(shape):
+                centroid = shape.centroid
+                pt = (centroid.x, centroid.y)
+                if not shape.contains(centroid):
+                    rp = shape.representative_point()
+                    pt = (rp.x, rp.y)
+                
+                if (self.is_valid_position(pt)):
+                    kernels.append(Map.Kernel(pt, depth))
+                return kernels
+
+            return self.find_kernels(shrunk, step_factor, depth + 1)
+        else:
+            print("Unsupported geometry type:", shape.geom_type)
+            return []
+
     def get_kernels(self, timestep: int):
-        if self._kernels is None:
-            self.compute_kernels(0.01)
-        
         if not(0 <= timestep < self.get_num_timesteps()):
             raise IndexError(f"Could not retrieve kernels for invalid timetep {timestep}")
         
-        return [Map.Kernel(k.get_coords(), k.get_depth()) for k in self._kernels[timestep]]
+        if (not self._kernels):
+            self._kernels = [[] for _ in range(self.get_num_timesteps())]
 
-    def compute_kernels(self, step_factor: float): 
-        self._kernels = []
-        for i in range(len(self._shadows)):
-            kernels = Map.Kernel.find_kernels(self._shadows[i], step_factor, 0, i, [])
-            self._kernels.append(kernels)    
+        if not self._kernels[timestep]:
+            self._kernels[timestep] = self.find_kernels(self._shadows[timestep], 0.01, 0)
+        
+        return [Map.Kernel(k.get_coords(), k.get_depth()) for k in self._kernels[timestep]]
+    
+    def plot_shadow_comparison(
+        self,
+        save_dir: str = "plots/shadow_comparison",
+        figsize: Tuple[int, int] = (8, 8),
+        show: bool = False
+    ):
+        """
+        Plots side-by-side comparison of shadow regions at each timestep:
+            - Left: Normal shadows (without re-added obstacles)
+            - Right: Shadows with obstacles unioned back in
+
+        Includes guard positions.
+        """
+        os.makedirs(save_dir, exist_ok=True)
+        minx, miny, maxx, maxy = self._shapely_boundary.bounds
+
+        for t in range(self.get_num_timesteps()):
+            fig, axs = plt.subplots(1, 2, figsize=(figsize[0]*2, figsize[1]))
+            titles = [
+                "Original Shadows (no obstacle inclusion)",
+                "Shadows + Obstacles (unioned back)"
+            ]
+
+            for ax_i, (ax, shadows) in enumerate([
+                (axs[0], self._shadows),
+                (axs[1], self._shadows_w_obs),
+            ]):
+                ax.set_aspect("equal", "box")
+                ax.axis("off")
+
+                # Base boundary + obstacles
+                add_polygon(ax, self._shapely_boundary, fc="white", ec="black", alpha=1.0)
+                add_polygon(ax, unary_union(self._shapely_obstacles), fc="dimgray", ec="black", alpha=1.0)
+
+                # Draw shadows
+                add_polygon(ax, shadows[t], fc="blue", ec=None, alpha=0.35, label="Shadow")
+
+                # Draw guards
+                for guard in self._guards:
+                    gx, gy = guard.get_path()[t]
+                    ax.plot(gx, gy, "r^", markersize=8, label="Guard")
+
+                # Title and legend
+                handles, labels = ax.get_legend_handles_labels()
+                by_label = dict(zip(labels, handles))
+                ax.legend(by_label.values(), by_label.keys(), loc="upper right", fontsize=8)
+                ax.set_xlim(minx - 0.5, maxx + 0.5)
+                ax.set_ylim(miny - 0.5, maxy + 0.5)
+                ax.set_title(f"{titles[ax_i]}\nTimestep {t}", fontsize=10)
+
+            # Save and optionally display
+            filename = os.path.join(save_dir, f"shadow_comparison_t{t}.png")
+            plt.tight_layout()
+            plt.savefig(filename, dpi=200, bbox_inches="tight")
+            if show:
+                plt.show()
+            plt.close(fig)
+            print(f"✅ Saved timestep {t} shadow comparison → {filename}")
+
+
 
     class Kernel:
         def __init__(self, coords: Tuple[float, float], depth: int):
@@ -315,53 +429,3 @@ class Map:
         
         def __str__(self) -> str:
             return f"Kernel (point=({self._coords[0]:.2f}, {self._coords[1]:.2f}), depth={self._depth})"
-        
-        @staticmethod
-        def find_kernels(shape: BaseGeometry, step_factor: float, depth: int, time_step: int, cur_kernels: List[Map.Kernel]) -> List[Map.Kernel]:
-            from map import KERNEL_SHAPES
-            if time_step not in KERNEL_SHAPES:
-                KERNEL_SHAPES[time_step] = []
-            KERNEL_SHAPES[time_step].append((shape, depth, cur_kernels.copy()))
-
-            # Base case(s)
-            if shape.is_empty:
-                print(f"Got an empty shape at depth {depth}")
-                return cur_kernels
-            elif (shape.geom_type == 'LineString'):
-                start_pt = Point(shape.coords[0])
-                end_pt = Point(shape.coords[-1])
-                mid_pt = shape.interpolate(0.5, normalized=True)
-
-                # Create kernels for each
-                for pt in (start_pt, mid_pt, end_pt):
-                    k = Map.Kernel((pt.x, pt.y), depth)
-                    cur_kernels.append(k)                
-                return cur_kernels
-
-            # Tail-Recursive steps
-            elif (shape.geom_type == 'MultiPolygon'):
-                for subpoly in shape.geoms:
-                    cur_kernels = Map.Kernel.find_kernels(subpoly, step_factor, depth + 1, time_step, cur_kernels)
-                return cur_kernels
-            elif (shape.geom_type == 'Polygon'):
-                adaptive_step = max(step_factor * math.sqrt(shape.area), 0.01)
-                shrunk = shape.buffer(-adaptive_step)
-
-                # Handle base-cases here too before we lose the shape
-                if shrunk.is_empty or shrunk.equals(shape):
-                    k = Map.Kernel(Map.Kernel.get_kernel_point(shape), depth)
-                    cur_kernels.append(k)
-                    KERNEL_SHAPES[time_step].append((shape, depth, cur_kernels.copy()))
-
-                return Map.Kernel.find_kernels(shrunk, step_factor, depth + 1, time_step, cur_kernels)
-            else:
-                print("Unsupported geometry type:", shape.geom_type)
-                return []
-
-        @staticmethod
-        def get_kernel_point(poly: Polygon) -> Tuple[float, float]:
-            centroid = poly.centroid
-            if (poly.contains(centroid) and isinstance(centroid, Point)):
-                return (centroid.x, centroid.y)
-            rp = poly.representative_point()
-            return (rp.x, rp.y)
