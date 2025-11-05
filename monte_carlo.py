@@ -144,12 +144,20 @@ class MonteCarloTree:
     def get_best_leaf(self) -> Optional["MonteCarloTree.Node"]:
         """
         Traverse the entire tree to find the leaf node with the highest average score.
+        Also prints:
+            - total number of nodes visited
+            - number of nodes per depth (breadth)
         """
         best_node = None
         best_score = -math.inf
+        total_nodes = 0
+        depth_breadth = {}  # depth -> count
 
         def dfs(node: "MonteCarloTree.Node"):
-            nonlocal best_node, best_score
+            nonlocal best_node, best_score, total_nodes, depth_breadth
+            total_nodes += 1
+            depth_breadth[node._depth] = depth_breadth.get(node._depth, 0) + 1
+
             if not node._children:  # leaf
                 if node._num_visits > 0:
                     avg_score = node._score / node._num_visits
@@ -161,8 +169,16 @@ class MonteCarloTree:
                     dfs(child)
 
         dfs(self.root)
+
+        # Print overall statistics
         print(f"🌟 Best leaf at depth {best_node._depth} with score {best_score:.3f}")
+        print(f"🌲 Total nodes in tree: {total_nodes}")
+        print("📊 Node breadth by depth:")
+        for depth in sorted(depth_breadth):
+            print(f"  Depth {depth}: {depth_breadth[depth]} node(s)")
+
         return best_node
+
     
     @staticmethod
     def get_path_to_root(node: "MonteCarloTree.Node") -> list["MonteCarloTree.Node"]:
@@ -218,7 +234,7 @@ class MonteCarloTree:
         def get_potential_moves(self, prune_tol: float = 0.1) -> List[Tuple[LineString, Tuple[float, float]]]:
             if (self._potential_moves is None):
                 moves = []
-                print(f"Computing potential moves for node {self}")
+                #print(f"Computing potential moves for node {self}")
                 if (self._depth == self._tree.max_depth):
                     return moves
                 
@@ -285,6 +301,7 @@ class MonteCarloTree:
             
         def get_moves_towards_kernels(self):
             moves = []
+
             for kernel in self._map.get_kernels(self._depth+1):
                 if same_position(self._loc, kernel.get_coords()):
                     continue

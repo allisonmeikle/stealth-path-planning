@@ -30,6 +30,7 @@ class Map:
     _shadows_w_obs: List[MultiPolygon]
     _kernels: Optional[List[List[Kernel]]]
     _kernels_w_obs: Optional[List[List[Kernel]]]
+    _path_cache: dict
 
     def __init__(self, grid_size: Tuple[int|float, int|float], boundary: List[Tuple[int|float, int|float]], obstacles: List[List[Tuple[int|float, int|float]]], guards: List[Guard], player: Player):
         # Validate grid size
@@ -50,6 +51,7 @@ class Map:
         self._obstacles = []
         self._shapely_obstacles = []
         for i, obs_coords in enumerate(obstacles):
+            print(f"Got obstacle with coords {obs_coords}")
             poly = Polygon(obs_coords)
             if not poly.is_valid:
                 raise ValueError(f"Obstacle #{i} invalid: {explain_validity(poly)}")
@@ -77,11 +79,18 @@ class Map:
         self.build_pathfinding_environment()
 
         self._kernels = None
+        self._path_cache = {}
     
     def build_visibility_environment(self):
         try:
             outer = vis.Polygon([vis.Point(x, y) for x, y in self._boundary])
-            holes = [vis.Polygon([vis.Point(x, y) for x, y in obstacle]) for obstacle in self._obstacles]
+            holes = []
+            print(self._obstacles)
+            if self._obstacles:
+                holes = [vis.Polygon([vis.Point(x, y) for x, y in obstacle]) for obstacle in self._obstacles]
+            print(f"Got holes:")
+            for hole in holes:
+                print(hole)
             visibility_env = vis.Environment([outer] + holes)
         except Exception as e:
             raise RuntimeError(f"Failed to build VisiLibity environment: {e}")
@@ -204,71 +213,6 @@ class Map:
             plt.close()
             print(f"✅ Saved map state for timestep {t} → {filename}")
 
-    @staticmethod
-    def visualize_kernel_evolution(time_step: int, save_dir="plots/kernel_evolution", fps: int = 10):
-        """
-        Builds an animated GIF showing how the shadow polygons erode into their kernels
-        over recursive depths recorded in KERNEL_SHAPES[time_step].
-        Each frame draws all polygons at that stage and overlays all kernel points found so far.
-        """
-        from map import KERNEL_SHAPES  # import here to avoid circular deps
-        os.makedirs(save_dir, exist_ok=True)
-
-        if time_step not in KERNEL_SHAPES or not KERNEL_SHAPES[time_step]:
-            print(f"⚠️ No recorded shapes for timestep {time_step}. Did you call find_kernels() with that timestep?")
-            return
-
-        frames = []
-        print(f"🎞️ Building kernel evolution GIF for timestep {time_step} ({len(KERNEL_SHAPES[time_step])} stages)...")
-
-        # Sort by recursion depth (so frames appear in chronological erosion order)
-        shape_snapshots = sorted(KERNEL_SHAPES[time_step], key=lambda x: x[1])
-
-        # Determine bounding box for consistent plotting
-        all_bounds = [s.bounds for s, _, _ in shape_snapshots if hasattr(s, "bounds")]
-        minx = min(b[0] for b in all_bounds)
-        miny = min(b[1] for b in all_bounds)
-        maxx = max(b[2] for b in all_bounds)
-        maxy = max(b[3] for b in all_bounds)
-
-        # Build individual frames
-        for idx, (shape, depth, kernels) in enumerate(shape_snapshots):
-            fig, ax = plt.subplots(figsize=(6, 6))
-            ax.set_aspect("equal", "box")
-            ax.set_title(f"Timestep {time_step} | Depth {depth} | {len(kernels)} kernels", fontsize=10)
-
-            # Draw current geometry
-            if shape.geom_type == "Polygon":
-                x, y = shape.exterior.xy
-                ax.fill(x, y, color="skyblue", alpha=0.4, ec="black")
-                for hole in shape.interiors:
-                    hx, hy = zip(*hole.coords)
-                    ax.fill(hx, hy, color="white")
-            elif shape.geom_type == "MultiPolygon":
-                for poly in shape.geoms:
-                    x, y = poly.exterior.xy
-                    ax.fill(x, y, color="skyblue", alpha=0.4, ec="black")
-
-            # Draw all kernel points found so far
-            for k in kernels:
-                kx, ky = k.get_coords()
-                ax.plot(kx, ky, "ro", markersize=4)
-
-            ax.set_xlim(minx - 0.5, maxx + 0.5)
-            ax.set_ylim(miny - 0.5, maxy + 0.5)
-            ax.axis("off")
-
-            frame_path = os.path.join(save_dir, f"frame_t{time_step}_d{depth:03d}.png")
-            plt.savefig(frame_path, dpi=100, bbox_inches="tight")
-            plt.close(fig)
-            frames.append(frame_path)
-
-        # Combine into GIF
-        images = [imageio.imread(f) for f in frames]
-        output_gif = os.path.join(save_dir, f"kernel_evolution_t{time_step}.gif")
-        imageio.mimsave(output_gif, images, duration=1/fps)
-        print(f"✅ Saved GIF → {output_gif}")
-
     def is_valid_position(self, pt: Tuple[int|float, int|float]):
         return self._polygon_env.within_map(np.asarray(pt))
     
@@ -290,10 +234,14 @@ class Map:
         return len(self._guards[0].get_path())
         
     def get_shortest_path(self, pt1: Tuple[float, float], pt2: Tuple[float, float]) -> Tuple[List[Tuple[float, float]], float]:
-        print(f"Finding path from {pt1} to {pt2}")
+        key = (round(pt1[0], 2), round(pt1[1], 2),round(pt2[0], 2), round(pt2[1], 2))
+        if key in self._path_cache:
+            #print("Path cache hit")
+            return self._path_cache[key]
         path, length = self._polygon_env.find_shortest_path(pt1, pt2)
         if (not path or not length):
             raise RuntimeError(f"Could not find path between {pt1} and {pt2}.")
+        self._path_cache[key] = (path, length)
         return path, length
     
     def get_visibility_polygon(self, timestep: int) -> MultiPolygon:
@@ -306,7 +254,7 @@ class Map:
                 raise IndexError(f"Could not retrieve shadow for invalid timetep {timestep}")
         return MultiPolygon([poly.buffer(0) for poly in self._shadows[timestep].geoms])
     
-    def find_kernels(self, shape: BaseGeometry, step_factor: float, depth: int): 
+    def find_kernels(self, shape: BaseGeometry, step_factor: float, depth: int) -> List[Map.Kernel]: 
         kernels = []
         # Base case(s)
         if shape.is_empty:
@@ -321,7 +269,7 @@ class Map:
         # Recursive steps
         elif (shape.geom_type == 'MultiPolygon'):
             for subpoly in shape.geoms:
-                return self.find_kernels(subpoly, step_factor, depth + 1)
+                kernels.extend(self.find_kernels(subpoly, step_factor, depth + 1))
         elif (shape.geom_type == 'Polygon'):
             adaptive_step = max(step_factor * math.sqrt(shape.area), 0.01)
             shrunk = shape.buffer(-adaptive_step)
@@ -341,19 +289,22 @@ class Map:
             return self.find_kernels(shrunk, step_factor, depth + 1)
         else:
             print("Unsupported geometry type:", shape.geom_type)
-            return []
+        
+        return kernels
 
     def get_kernels(self, timestep: int):
         if not(0 <= timestep < self.get_num_timesteps()):
             raise IndexError(f"Could not retrieve kernels for invalid timetep {timestep}")
         
-        if (not self._kernels):
+        if (not self._kernels or not self._kernels_w_obs):
             self._kernels = [[] for _ in range(self.get_num_timesteps())]
+            self._kernels_w_obs = [[] for _ in range(self.get_num_timesteps())]
 
         if not self._kernels[timestep]:
             self._kernels[timestep] = self.find_kernels(self._shadows[timestep], 0.01, 0)
-        
-        return [Map.Kernel(k.get_coords(), k.get_depth()) for k in self._kernels[timestep]]
+            self._kernels_w_obs[timestep] = self.find_kernels(self._shadows_w_obs[timestep], 0.01, 0)
+                
+        return [Map.Kernel(k.get_coords(), k.get_depth()) for k in list(self._kernels[timestep] + self._kernels_w_obs[timestep])]
     
     def plot_shadow_comparison(
         self,
@@ -362,25 +313,30 @@ class Map:
         show: bool = False
     ):
         """
-        Plots side-by-side comparison of shadow regions at each timestep:
-            - Left: Normal shadows (without re-added obstacles)
-            - Right: Shadows with obstacles unioned back in
-
-        Includes guard positions.
+        Plots side-by-side comparison of shadow regions and their kernels at each timestep:
+            - Left: Normal shadows (without re-added obstacles) and their kernels
+            - Right: Shadows with obstacles unioned back in and their kernels
         """
         os.makedirs(save_dir, exist_ok=True)
         minx, miny, maxx, maxy = self._shapely_boundary.bounds
 
+        # Ensure kernels are computed
         for t in range(self.get_num_timesteps()):
+            if (not self._kernels or not self._kernels_w_obs or
+                not self._kernels[t] or not self._kernels_w_obs[t]):
+                # This will populate both lists lazily
+                _ = self.get_kernels(t)
+
             fig, axs = plt.subplots(1, 2, figsize=(figsize[0]*2, figsize[1]))
             titles = [
                 "Original Shadows (no obstacle inclusion)",
                 "Shadows + Obstacles (unioned back)"
             ]
 
-            for ax_i, (ax, shadows) in enumerate([
-                (axs[0], self._shadows),
-                (axs[1], self._shadows_w_obs),
+            # --- Left and Right Panels ---
+            for ax_i, (ax, shadows, kernels) in enumerate([
+                (axs[0], self._shadows, self._kernels),
+                (axs[1], self._shadows_w_obs, self._kernels_w_obs),
             ]):
                 ax.set_aspect("equal", "box")
                 ax.axis("off")
@@ -392,12 +348,20 @@ class Map:
                 # Draw shadows
                 add_polygon(ax, shadows[t], fc="blue", ec=None, alpha=0.35, label="Shadow")
 
-                # Draw guards
+                # Draw guard positions
                 for guard in self._guards:
                     gx, gy = guard.get_path()[t]
                     ax.plot(gx, gy, "r^", markersize=8, label="Guard")
 
-                # Title and legend
+                # Draw kernel points
+                kernel_color = "limegreen" if ax_i == 0 else "gold"
+                kernel_label = "Kernel (normal)" if ax_i == 0 else "Kernel (w/ obstacles)"
+                if kernels[t]:
+                    for k in kernels[t]:
+                        kx, ky = k.get_coords()
+                        ax.plot(kx, ky, "o", color=kernel_color, markersize=6, label=kernel_label)
+
+                # Legend + Formatting
                 handles, labels = ax.get_legend_handles_labels()
                 by_label = dict(zip(labels, handles))
                 ax.legend(by_label.values(), by_label.keys(), loc="upper right", fontsize=8)
@@ -405,7 +369,7 @@ class Map:
                 ax.set_ylim(miny - 0.5, maxy + 0.5)
                 ax.set_title(f"{titles[ax_i]}\nTimestep {t}", fontsize=10)
 
-            # Save and optionally display
+            # --- Save and optionally show ---
             filename = os.path.join(save_dir, f"shadow_comparison_t{t}.png")
             plt.tight_layout()
             plt.savefig(filename, dpi=200, bbox_inches="tight")
@@ -413,7 +377,6 @@ class Map:
                 plt.show()
             plt.close(fig)
             print(f"✅ Saved timestep {t} shadow comparison → {filename}")
-
 
 
     class Kernel:

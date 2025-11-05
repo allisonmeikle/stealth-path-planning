@@ -12,18 +12,13 @@ def is_valid_position(pos):
     return isinstance(pos, list) and len(pos) == 2 and all(isinstance(x, (int, float)) for x in pos)
 
 def is_valid_guard(guard):
-    print(f"Checking is valid guard for {guard}")
     if not isinstance(guard, dict):
         return False
     
     radius = guard.get("radius")
     if not radius or not isinstance(radius, float):
         return False
-    print("radius is valid")
-    speed = guard.get("speed")
-    if not speed or not isinstance(speed, float):
-        return False
-    print("speed is valid")
+    
     positions = guard.get("positions")
     if not positions or not isinstance(positions, list) or not all(is_valid_position(x) for x in positions):
         return False
@@ -75,7 +70,9 @@ def load_level_info(file_name):
         raise ValueError("Map boundary parameter missing or invalid")
 
     obstacles = level.get("obstacles")
-    if not obstacles or not isinstance(obstacles, list) or not all(isinstance(poly, list) and all(is_valid_position(p) for p in poly) for poly in obstacles):
+    print(obstacles)
+    print((not obstacles), (not isinstance(obstacles, list)), not all(isinstance(poly, list) and all(is_valid_position(p) for p in poly) for poly in obstacles))
+    if not isinstance(obstacles, list) or not all(isinstance(poly, list) and all(is_valid_position(p) for p in poly) for poly in obstacles):
         raise ValueError("Map obstacles parameter missing or invalid")
     
     map = Map(grid_size, boundary, obstacles, guard_objs, player)
@@ -103,8 +100,8 @@ def visualize_best_path(tree: MonteCarloTree, save_dir="plots/best_path_gif", du
         add_polygon(ax, map.get_shadow(node._depth), fc="blue", alpha=0.25)
 
         # --- Draw positions ---
-        ax.plot(guard_pos[0], guard_pos[1], "r^", markersize=8, label="Guard")
-        ax.plot(player_pos[0], player_pos[1], "bo", markersize=8, label="Player")
+        ax.plot(guard_pos[0], guard_pos[1], "r^", markersize=4, label="Guard")
+        ax.plot(player_pos[0], player_pos[1], "bo", markersize=4, label="Player")
 
         # --- Draw path so far ---
         if i > 0:
@@ -127,11 +124,11 @@ def main():
 
     player, guards, map = load_level_info(args.level)
 
-    map.plot_shadow_comparison('plots/shadow_comparison1')
-    #monte_carlo_tree = MonteCarloTree(map)
-    #result = monte_carlo_tree.run()
-    #visualize_best_path(monte_carlo_tree, duration=0.3)
-    #make_gifs('plots/best_path_gif')    
+    #map.plot_shadow_comparison('plots/shadow_comparison1')
+    monte_carlo_tree = MonteCarloTree(map)
+    result = monte_carlo_tree.run()
+    visualize_best_path(monte_carlo_tree, duration=0.3)
+    make_gifs('plots/best_path_gif')    
 
 if __name__ == "__main__":
     main()
