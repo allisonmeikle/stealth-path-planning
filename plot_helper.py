@@ -249,6 +249,10 @@ def plot_paths(tree, base_dir="tree_paths"):
 import re
 import imageio.v2 as imageio
 
+def natural_key(name):
+    return [int(part) if part.isdigit() else part
+            for part in re.split(r"(\d+)", name)]
+
 def make_gifs(folder_path, output_name="animation.gif", duration=0.25, loop=True):
     """
     Combine numbered frame_XXX.png images in `folder_path` into a GIF.
@@ -260,15 +264,13 @@ def make_gifs(folder_path, output_name="animation.gif", duration=0.25, loop=True
         for f in os.listdir(folder_path)
         if f.endswith(".png")
     ]
-
-    # --- Sort numerically ---
-    frames.sort(key=lambda f: int(re.search(r"(\d+)", f).group()))
+    frame_files = sorted(frames, key=natural_key)
 
     # Debug: check order
-    print("🧩 Frame order:", [os.path.basename(f) for f in frames])
+    print("🧩 Frame order:", [os.path.basename(f) for f in frame_files])
 
     # --- Read images ---
-    images = [imageio.imread(f) for f in frames]
+    images = [imageio.imread(f) for f in frame_files]
 
     # --- Create output path ---
     output_path = os.path.join(folder_path, output_name)

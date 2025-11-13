@@ -234,7 +234,7 @@ class Map:
         return len(self._guards[0].get_path())
         
     def get_shortest_path(self, pt1: Tuple[float, float], pt2: Tuple[float, float]) -> Tuple[List[Tuple[float, float]], float]:
-        key = (round(pt1[0], 2), round(pt1[1], 2),round(pt2[0], 2), round(pt2[1], 2))
+        key = (round(pt1[0], 1), round(pt1[1], 1),round(pt2[0], 1), round(pt2[1], 1))
         if key in self._path_cache:
             #print("Path cache hit")
             return self._path_cache[key]
@@ -302,7 +302,9 @@ class Map:
 
         if not self._kernels[timestep]:
             self._kernels[timestep] = self.find_kernels(self._shadows[timestep], 0.01, 0)
+            self._kernels[timestep].sort(key=lambda k: k.get_depth(), reverse=True)
             self._kernels_w_obs[timestep] = self.find_kernels(self._shadows_w_obs[timestep], 0.01, 0)
+            self._kernels_w_obs[timestep].sort(key=lambda k: k.get_depth(), reverse=True)
                 
         return [Map.Kernel(k.get_coords(), k.get_depth()) for k in list(self._kernels[timestep] + self._kernels_w_obs[timestep])]
     

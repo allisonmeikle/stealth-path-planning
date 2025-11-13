@@ -1,0 +1,17 @@
+Best leaf at depth 11 with score 8.310
+Total nodes in tree: 406, with max depth 34
+Node breadth by depth:
+  Depth 0: 1 node(s)
+  Depth 1: 4 node(s)
+  Depth 2: 12 node(s)
+  Depth 3: 29 node(s)
+  Depth 4: 54 node(s)
+  Depth 5: 74 node(s)
+  Depth 6: 84 node(s)
+  Depth 7: 61 node(s)
+  Depth 8: 39 node(s)
+  Depth 9: 28 node(s)
+  Depth 10: 13 node(s)
+  Depth 11: 6 node(s)
+  Depth 12: 2 node(s)
+Took 10.004 to find the best path
