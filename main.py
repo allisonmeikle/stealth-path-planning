@@ -72,24 +72,22 @@ def load_level_info(file_name):
         raise ValueError("Map boundary parameter missing or invalid")
 
     obstacles = level.get("obstacles")
-    print(obstacles)
-    print((not obstacles), (not isinstance(obstacles, list)), not all(isinstance(poly, list) and all(is_valid_position(p) for p in poly) for poly in obstacles))
     if not isinstance(obstacles, list) or not all(isinstance(poly, list) and all(is_valid_position(p) for p in poly) for poly in obstacles):
         raise ValueError("Map obstacles parameter missing or invalid")
     
     map = Map(grid_size, boundary, obstacles, guard_objs, player)
 
-    return player, guard_objs, map
+    return map
 
 def output_results(tree: MonteCarloTree, run_time: str, save_dir="plots/best_path_gif", duration=0.25):
     os.makedirs(save_dir, exist_ok=True)
     stats = tree.get_stats()
-    path = tree.find_best_path_to_max_depth(tree._root)
 
     with open(os.path.join(save_dir, "stats.txt"), 'w') as f:
         stats += "Took " + run_time + " to find the best path"
         f.write(stats)
 
+    path = tree.get_best_path()
     frames = []
     path_pts = []
     for i, edge in enumerate(path):
@@ -163,7 +161,7 @@ def main():
     parser.add_argument("level", help="Name of the JSON file in the ./maps directory")
     args = parser.parse_args()
 
-    player, guards, map = load_level_info(args.level)
+    map = load_level_info(args.level)
     '''
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     save_dir = os.path.join(CUR_DIR, "results", "guard_paths", f"guards_{timestamp}")
@@ -171,16 +169,17 @@ def main():
     return
     '''
     #map.plot_shadow_comparison('plots/shadow_comparison1')
-    monte_carlo_tree = MonteCarloTree(map)
+    monte_carlo_tree = MonteCarloTree(map, max_edges=100)
     start_time = time.time()
-    monte_carlo_tree.run(total_time = 600)
+    monte_carlo_tree.run(120)
     end_time = time.time()
     print(f"Monte Carlo run took {(end_time - start_time):.3f} seconds")
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    dirname = os.path.join(CUR_DIR, "results", "nov-13", f"results_{timestamp}")
+    dirname = os.path.join(CUR_DIR, "results", "nov-20", f"results_{timestamp}")
     run_time = f"{(end_time - start_time):.3f}"
     output_results(monte_carlo_tree, run_time, save_dir=dirname, duration=0.3)
     make_gifs(dirname)    
+    os.system('say "Monte Carlo run complete"')
 
 if __name__ == "__main__":
     main()

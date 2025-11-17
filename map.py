@@ -1,9 +1,7 @@
 from __future__ import annotations
-import imageio
 import math
 import numpy as np
 import os
-import random
 import visilibity as vis
 
 from typing import List, Optional, Tuple, Union
@@ -50,8 +48,8 @@ class Map:
         # Validate obstacles (must each be CW)
         self._obstacles = []
         self._shapely_obstacles = []
+        self._walkable_area = self._shapely_boundary.area
         for i, obs_coords in enumerate(obstacles):
-            print(f"Got obstacle with coords {obs_coords}")
             poly = Polygon(obs_coords)
             if not poly.is_valid:
                 raise ValueError(f"Obstacle #{i} invalid: {explain_validity(poly)}")
@@ -59,6 +57,12 @@ class Map:
                 raise ValueError(f"Obstacle #{i} must be clockwise (CW), got CCW")
             self._obstacles.append(obs_coords)
             self._shapely_obstacles.append(poly)
+            self._walkable_area -= poly.area
+
+        # Pruning tolerance parameter α
+        self._prune_alpha = 0.02 
+        self._prune_tol = math.sqrt(self._walkable_area) * self._prune_alpha
+        print(f"Map prune tolerance {self._prune_tol}")
 
         # --- Validate guards ---
         if not guards:
@@ -215,6 +219,16 @@ class Map:
 
     def is_valid_position(self, pt: Tuple[int|float, int|float]):
         return self._polygon_env.within_map(np.asarray(pt))
+
+    def is_same_position(self, p1: Tuple[int|float, int|float], p2: Tuple[int|float, int|float]):
+        dx = p1[0] - p2[0]
+        dy = p1[1] - p2[1]
+        return (dx*dx + dy*dy) <= (self._prune_tol * self._prune_tol)
+    
+    def quantize_point(self, p):
+        qx = round(p[0] / self._prune_tol)
+        qy = round(p[1] / self._prune_tol)
+        return (qx, qy)
     
     def get_player_start_pos(self):
         return self._player.get_start_pos(self)
@@ -308,79 +322,6 @@ class Map:
                 
         return [Map.Kernel(k.get_coords(), k.get_depth()) for k in list(self._kernels[timestep] + self._kernels_w_obs[timestep])]
     
-    def plot_shadow_comparison(
-        self,
-        save_dir: str = "plots/shadow_comparison",
-        figsize: Tuple[int, int] = (8, 8),
-        show: bool = False
-    ):
-        """
-        Plots side-by-side comparison of shadow regions and their kernels at each timestep:
-            - Left: Normal shadows (without re-added obstacles) and their kernels
-            - Right: Shadows with obstacles unioned back in and their kernels
-        """
-        os.makedirs(save_dir, exist_ok=True)
-        minx, miny, maxx, maxy = self._shapely_boundary.bounds
-
-        # Ensure kernels are computed
-        for t in range(self.get_num_timesteps()):
-            if (not self._kernels or not self._kernels_w_obs or
-                not self._kernels[t] or not self._kernels_w_obs[t]):
-                # This will populate both lists lazily
-                _ = self.get_kernels(t)
-
-            fig, axs = plt.subplots(1, 2, figsize=(figsize[0]*2, figsize[1]))
-            titles = [
-                "Original Shadows (no obstacle inclusion)",
-                "Shadows + Obstacles (unioned back)"
-            ]
-
-            # --- Left and Right Panels ---
-            for ax_i, (ax, shadows, kernels) in enumerate([
-                (axs[0], self._shadows, self._kernels),
-                (axs[1], self._shadows_w_obs, self._kernels_w_obs),
-            ]):
-                ax.set_aspect("equal", "box")
-                ax.axis("off")
-
-                # Base boundary + obstacles
-                add_polygon(ax, self._shapely_boundary, fc="white", ec="black", alpha=1.0)
-                add_polygon(ax, unary_union(self._shapely_obstacles), fc="dimgray", ec="black", alpha=1.0)
-
-                # Draw shadows
-                add_polygon(ax, shadows[t], fc="blue", ec=None, alpha=0.35, label="Shadow")
-
-                # Draw guard positions
-                for guard in self._guards:
-                    gx, gy = guard.get_path()[t]
-                    ax.plot(gx, gy, "r^", markersize=8, label="Guard")
-
-                # Draw kernel points
-                kernel_color = "limegreen" if ax_i == 0 else "gold"
-                kernel_label = "Kernel (normal)" if ax_i == 0 else "Kernel (w/ obstacles)"
-                if kernels[t]:
-                    for k in kernels[t]:
-                        kx, ky = k.get_coords()
-                        ax.plot(kx, ky, "o", color=kernel_color, markersize=6, label=kernel_label)
-
-                # Legend + Formatting
-                handles, labels = ax.get_legend_handles_labels()
-                by_label = dict(zip(labels, handles))
-                ax.legend(by_label.values(), by_label.keys(), loc="upper right", fontsize=8)
-                ax.set_xlim(minx - 0.5, maxx + 0.5)
-                ax.set_ylim(miny - 0.5, maxy + 0.5)
-                ax.set_title(f"{titles[ax_i]}\nTimestep {t}", fontsize=10)
-
-            # --- Save and optionally show ---
-            filename = os.path.join(save_dir, f"shadow_comparison_t{t}.png")
-            plt.tight_layout()
-            plt.savefig(filename, dpi=200, bbox_inches="tight")
-            if show:
-                plt.show()
-            plt.close(fig)
-            print(f"✅ Saved timestep {t} shadow comparison → {filename}")
-
-
     class Kernel:
         def __init__(self, coords: Tuple[float, float], depth: int):
             self._coords = coords

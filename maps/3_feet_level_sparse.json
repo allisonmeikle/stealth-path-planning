@@ -30,6 +30,7 @@
     "obstacles": [],
     "player_radius": 0.1,
     "player_speed": 1.0,
+    "player_start": [10.5, 15.0],
     "guards": [
         {
             "radius": 0.1,
