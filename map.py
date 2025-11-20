@@ -89,10 +89,8 @@ class Map:
         try:
             outer = vis.Polygon([vis.Point(x, y) for x, y in self._boundary])
             holes = []
-            print(self._obstacles)
             if self._obstacles:
                 holes = [vis.Polygon([vis.Point(x, y) for x, y in obstacle]) for obstacle in self._obstacles]
-            print(f"Got holes:")
             for hole in holes:
                 print(hole)
             visibility_env = vis.Environment([outer] + holes)
@@ -105,6 +103,14 @@ class Map:
         vis_polys = []
         shadows = []
         shadows_w_obs = []
+        map_free = Polygon(
+            self._shapely_boundary.exterior.coords,
+            holes=[obs.exterior.coords for obs in self._shapely_obstacles]
+        )
+
+        def sort_by_angle(coords, origin):
+            ox, oy = origin
+            return sorted(coords, key=lambda p: math.atan2(p[1]-oy, p[0]-ox))
 
         for t in range(self.get_num_timesteps()):
             polys = []
@@ -113,13 +119,22 @@ class Map:
                 try:
                     V = vis.Visibility_Polygon(vis.Point(*guard_pos), visibility_env, 1e-5)
                     coords = [(V[i].x(), V[i].y()) for i in range(V.n())]
-                    poly = Polygon(coords)
+                    coords = sort_by_angle(coords, guard_pos)
+                    poly = Polygon(coords).buffer(0)                    
+                    poly = poly.intersection(map_free)
+                    print(poly)
                     if poly.is_valid and not poly.is_empty:
                         polys.append(poly)
                 except Exception as e:
                     print(f"Warning: failed to compute visibility polygon at time {t} for guard at {guard_pos}: {e}")
                     continue  # skip this guard this timestep
             
+            for i, poly in enumerate(polys):
+                if not poly.is_valid:
+                    print(f"INVALID visibility poly at timestep {t}, index {i}")
+                    print(explain_validity(poly))
+                    print(poly.wkt)
+
             multi_poly = MultiPolygon(polys)
             vis_polys.append(multi_poly)
 
@@ -127,6 +142,13 @@ class Map:
                 self._shapely_boundary.exterior.coords,
                 holes=[obs.exterior.coords for obs in self._shapely_obstacles]
             )
+
+            print("\n=== DEBUG: Checking validity before difference ===")
+            print("map_free valid:", map_free.is_valid, explain_validity(map_free))
+            print("multi_poly valid:", multi_poly.is_valid)
+            for i, poly in enumerate(polys):
+                if not poly.is_valid:
+                    print(f"  visibility poly #{i} invalid:", explain_validity(poly))
 
             shadow = map_free.difference(multi_poly)
             shadow = shadow.difference(unary_union(self._shapely_obstacles)) 

@@ -171,7 +171,7 @@ def main():
     #map.plot_shadow_comparison('plots/shadow_comparison1')
     monte_carlo_tree = MonteCarloTree(map, max_edges=100)
     start_time = time.time()
-    monte_carlo_tree.run(120)
+    monte_carlo_tree.run(60)
     end_time = time.time()
     print(f"Monte Carlo run took {(end_time - start_time):.3f} seconds")
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
