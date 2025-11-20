@@ -15,6 +15,8 @@ from extremitypathfinder import PolygonEnvironment
 from characters import *
 from plot_helper import *
 
+import matplotlib.pyplot as plt
+
 KERNEL_SHAPES: dict[int, list[tuple[BaseGeometry, int, list["Map.Kernel"]]]] = {}
 
 class Map:
@@ -62,7 +64,6 @@ class Map:
         # Pruning tolerance parameter α
         self._prune_alpha = 0.02 
         self._prune_tol = math.sqrt(self._walkable_area) * self._prune_alpha
-        print(f"Map prune tolerance {self._prune_tol}")
 
         # --- Validate guards ---
         if not guards:
@@ -84,15 +85,29 @@ class Map:
 
         self._kernels = None
         self._path_cache = {}
-    
+
+    @staticmethod
+    def extract_polygons(shape) -> list[Polygon]:
+        polys = []
+        if isinstance(shape, Polygon):
+            polys.append(shape)
+        elif isinstance(shape, MultiPolygon):
+            polys.extend(list(shape.geoms))
+        elif shape.geom_type == "GeometryCollection":
+            polys.extend([p for p in shape.geoms if isinstance(p, Polygon)])
+
+        valid_polys = []
+        for poly in polys:
+            if isinstance(poly, Polygon) and poly.is_valid and not poly.is_empty:
+                valid_polys.append(poly)
+        return valid_polys
+
     def build_visibility_environment(self):
         try:
             outer = vis.Polygon([vis.Point(x, y) for x, y in self._boundary])
             holes = []
             if self._obstacles:
                 holes = [vis.Polygon([vis.Point(x, y) for x, y in obstacle]) for obstacle in self._obstacles]
-            for hole in holes:
-                print(hole)
             visibility_env = vis.Environment([outer] + holes)
         except Exception as e:
             raise RuntimeError(f"Failed to build VisiLibity environment: {e}")
@@ -108,9 +123,6 @@ class Map:
             holes=[obs.exterior.coords for obs in self._shapely_obstacles]
         )
 
-        def sort_by_angle(coords, origin):
-            ox, oy = origin
-            return sorted(coords, key=lambda p: math.atan2(p[1]-oy, p[0]-ox))
 
         for t in range(self.get_num_timesteps()):
             polys = []
@@ -119,36 +131,36 @@ class Map:
                 try:
                     V = vis.Visibility_Polygon(vis.Point(*guard_pos), visibility_env, 1e-5)
                     coords = [(V[i].x(), V[i].y()) for i in range(V.n())]
-                    coords = sort_by_angle(coords, guard_pos)
-                    poly = Polygon(coords).buffer(0)                    
-                    poly = poly.intersection(map_free)
-                    print(poly)
-                    if poly.is_valid and not poly.is_empty:
-                        polys.append(poly)
+                    
+                    poly = Polygon(coords).buffer(0)
+                    polys.extend(Map.extract_polygons(poly))
                 except Exception as e:
                     print(f"Warning: failed to compute visibility polygon at time {t} for guard at {guard_pos}: {e}")
                     continue  # skip this guard this timestep
             
-            for i, poly in enumerate(polys):
-                if not poly.is_valid:
-                    print(f"INVALID visibility poly at timestep {t}, index {i}")
-                    print(explain_validity(poly))
-                    print(poly.wkt)
-
-            multi_poly = MultiPolygon(polys)
+            multi_poly = MultiPolygon(polys).buffer(0)
+            multi_poly = MultiPolygon(Map.extract_polygons(multi_poly))
             vis_polys.append(multi_poly)
+
+            fig, ax = plt.subplots(figsize=(8, 8))
+            ax.set_aspect("equal", "box")
+            ax.axis("off")
+
+            # -------------------------------------------------------
+            # Draw Map
+            # -------------------------------------------------------
+            add_polygon(ax, map_free, fc="white", ec="black", alpha=1.0, zorder=1)
+            obstacles = unary_union(self._shapely_obstacles)
+            add_polygon(ax, obstacles, fc="dimgray", ec="black", alpha=1.0, zorder=2)
+
+            add_polygon(ax, poly, fc="red", alpha=0.30, zorder=3)
+            plt.savefig(f"/Users/allisonmeikle/Desktop/McGill/comp-400/plots/testing/vis_poly{t}", dpi=130, bbox_inches="tight")
+            plt.close()
 
             map_free = Polygon(
                 self._shapely_boundary.exterior.coords,
                 holes=[obs.exterior.coords for obs in self._shapely_obstacles]
             )
-
-            print("\n=== DEBUG: Checking validity before difference ===")
-            print("map_free valid:", map_free.is_valid, explain_validity(map_free))
-            print("multi_poly valid:", multi_poly.is_valid)
-            for i, poly in enumerate(polys):
-                if not poly.is_valid:
-                    print(f"  visibility poly #{i} invalid:", explain_validity(poly))
 
             shadow = map_free.difference(multi_poly)
             shadow = shadow.difference(unary_union(self._shapely_obstacles)) 
