@@ -8,74 +8,46 @@ from typing import List, Optional, Tuple, Union
 from shapely.geometry.base import BaseGeometry
 from shapely.validation import explain_validity
 from shapely.geometry.polygon import orient
-from shapely.ops import unary_union
+from shapely.ops import unary_union, nearest_points
 from shapely import Geometry, LineString, MultiPolygon, Point, Polygon
 from extremitypathfinder import PolygonEnvironment
 
 from characters import *
-from plot_helper import *
-
-import matplotlib.pyplot as plt
-
-KERNEL_SHAPES: dict[int, list[tuple[BaseGeometry, int, list["Map.Kernel"]]]] = {}
 
 class Map:
-    _grid_size: Tuple[float, float]
-    _boundary: List[Tuple[float, float]]
-    _shapely_boundary: Polygon
-    _obstacles: List[List[Tuple[float, float]]]
-    _shapely_obstacles: List[Polygon]
-    _visibility_polygons: List[MultiPolygon]
-    _shadows: List[MultiPolygon]
-    _shadows_w_obs: List[MultiPolygon]
-    _kernels: Optional[List[List[Kernel]]]
-    _kernels_w_obs: Optional[List[List[Kernel]]]
-    _path_cache: dict
-
     def __init__(self, grid_size: Tuple[int|float, int|float], boundary: List[Tuple[int|float, int|float]], obstacles: List[List[Tuple[int|float, int|float]]], guards: List[Guard], player: Player):
         # Validate grid size
         if len(grid_size) != 2 or grid_size[0] <= 0 or grid_size[1] <= 0:
             raise ValueError(f"Invalid grid size {grid_size}: must be positive (width, height)")
         self._grid_size = grid_size
-
-        # Validate boundary orientation (must be CCW)
-        boundary_poly = Polygon(boundary)
-        if not boundary_poly.is_valid:
-            raise ValueError(f"Boundary polygon invalid: {explain_validity(boundary_poly)}")
-        if not boundary_poly.exterior.is_ccw:
-            raise ValueError("Boundary must be defined in counter-clockwise (CCW) order")
-        self._boundary = boundary
-        self._shapely_boundary = boundary_poly
-
-        # Validate obstacles (must each be CW)
-        self._obstacles = []
-        self._shapely_obstacles = []
-        self._walkable_area = self._shapely_boundary.area
-        for i, obs_coords in enumerate(obstacles):
-            poly = Polygon(obs_coords)
-            if not poly.is_valid:
-                raise ValueError(f"Obstacle #{i} invalid: {explain_validity(poly)}")
-            if poly.exterior.is_ccw:
-                raise ValueError(f"Obstacle #{i} must be clockwise (CW), got CCW")
-            self._obstacles.append(obs_coords)
-            self._shapely_obstacles.append(poly)
-            self._walkable_area -= poly.area
-
-        # Pruning tolerance parameter α
-        self._prune_alpha = 0.02 
-        self._prune_tol = math.sqrt(self._walkable_area) * self._prune_alpha
-
-        # --- Validate guards ---
-        if not guards:
-            raise ValueError("Map must contain at least one guard.")
-        path_lengths = [len(g.get_path()) for g in guards]
-        if len(set(path_lengths)) != 1:
-            raise ValueError(
-                f"All guards must have the same path length, but got lengths: {path_lengths}"
-            )
-
         self._guards = guards
         self._player = player
+        
+        boundary_poly = orient(Polygon(boundary), sign=1.0) # CCW
+        if not boundary_poly.is_valid:
+            raise ValueError(f"Boundary polygon invalid: {explain_validity(boundary_poly)}")
+        self._boundary = boundary
+        self._shapely_boundary = boundary_poly    
+        self._shapely_boundary_inflated = orient(boundary_poly.buffer(-self._player.get_radius()), sign=1.0) # CCW
+
+        self._obstacles = []
+        self._shapely_obstacles = []
+        self._shapely_obstacles_inflated = []
+        for i, obs_coords in enumerate(obstacles):
+            self._obstacles.append(obs_coords)
+
+            poly = Polygon(obs_coords)
+            poly = orient(poly, sign=-1.0) # CW
+            if not poly.is_valid:
+                raise ValueError(f"Obstacle #{i} invalid: {explain_validity(poly)}")
+            self._shapely_obstacles.append(poly)
+            self._shapely_obstacles_inflated.append(orient(poly.buffer(self._player.get_radius()), sign=-1.0))
+
+        # Calculate walkable area
+        self._shapely_walkable_area = self._shapely_boundary_inflated.difference(unary_union(self._shapely_obstacles_inflated))
+        # Pruning tolerance parameter α
+        self._prune_alpha = 0.02 
+        self._prune_tol = math.sqrt(self._shapely_walkable_area.area) * self._prune_alpha
 
         # Build visibility environment (visilibity)
         self.build_visibility_environment()
@@ -84,7 +56,11 @@ class Map:
         self.build_pathfinding_environment()
 
         self._kernels = None
+        self._kernels_w_obs = None
+        self._kernels_merged = None
         self._path_cache = {}
+        self._path_cache_queries = 0
+        self._path_cache_hits = 0
 
     @staticmethod
     def extract_polygons(shape) -> list[Polygon]:
@@ -116,6 +92,7 @@ class Map:
             raise ValueError("Invalid VisiLibity environment built from map geometry")
 
         vis_polys = []
+        vis_polys_raw = []
         shadows = []
         shadows_w_obs = []
         map_free = Polygon(
@@ -123,15 +100,15 @@ class Map:
             holes=[obs.exterior.coords for obs in self._shapely_obstacles]
         )
 
-
         for t in range(self.get_num_timesteps()):
+            polys_raw = []
             polys = []
             for guard in self._guards:
                 guard_pos = guard.get_path()[t]
                 try:
                     V = vis.Visibility_Polygon(vis.Point(*guard_pos), visibility_env, 1e-5)
+                    polys_raw.append(V)
                     coords = [(V[i].x(), V[i].y()) for i in range(V.n())]
-                    
                     poly = Polygon(coords).buffer(0)
                     polys.extend(Map.extract_polygons(poly))
                 except Exception as e:
@@ -141,26 +118,7 @@ class Map:
             multi_poly = MultiPolygon(polys).buffer(0)
             multi_poly = MultiPolygon(Map.extract_polygons(multi_poly))
             vis_polys.append(multi_poly)
-
-            fig, ax = plt.subplots(figsize=(8, 8))
-            ax.set_aspect("equal", "box")
-            ax.axis("off")
-
-            # -------------------------------------------------------
-            # Draw Map
-            # -------------------------------------------------------
-            add_polygon(ax, map_free, fc="white", ec="black", alpha=1.0, zorder=1)
-            obstacles = unary_union(self._shapely_obstacles)
-            add_polygon(ax, obstacles, fc="dimgray", ec="black", alpha=1.0, zorder=2)
-
-            add_polygon(ax, poly, fc="red", alpha=0.30, zorder=3)
-            plt.savefig(f"/Users/allisonmeikle/Desktop/McGill/comp-400/plots/testing/vis_poly{t}", dpi=130, bbox_inches="tight")
-            plt.close()
-
-            map_free = Polygon(
-                self._shapely_boundary.exterior.coords,
-                holes=[obs.exterior.coords for obs in self._shapely_obstacles]
-            )
+            vis_polys_raw.append(polys_raw)
 
             shadow = map_free.difference(multi_poly)
             shadow = shadow.difference(unary_union(self._shapely_obstacles)) 
@@ -183,86 +141,50 @@ class Map:
                     shadow = shadow.union(obs)
             shadows_w_obs.append(shadow)
 
-        self._visibility_polygons = vis_polys
+        self._visibility_polygons = vis_polys_raw
+        self._shapely_visibility_polygons = vis_polys
         self._shadows = shadows
         self._shadows_w_obs = shadows_w_obs
 
     def build_pathfinding_environment(self):
         try:
-            boundary_poly = self._shapely_boundary
-            obstacles_poly = self._shapely_obstacles
-
-            if self._player.get_radius() > 0:
-                # need to inflate the boundaries 
-                boundary_poly = boundary_poly.buffer(-self._player.get_radius())
-                obstacles_poly = [obstacle.buffer(self._player.get_radius()) for obstacle in obstacles_poly]
-            
-            boundary_poly = orient(boundary_poly, sign=1.0)   # CCW
-            obstacles_poly = [orient(obs, sign=-1.0) for obs in obstacles_poly]  # CW
-
-            boundary_coords = list(boundary_poly.exterior.coords)[:-1]
-            obstacle_coords = [list(obstacle.exterior.coords)[:-1] for obstacle in obstacles_poly]
+            boundary_coords = list(self._shapely_boundary_inflated.exterior.coords)[:-1]
+            obstacle_coords = [list(obstacle.exterior.coords)[:-1] for obstacle in self._shapely_obstacles_inflated]
 
             self._polygon_env = PolygonEnvironment()
             self._polygon_env.store(boundary_coords, obstacle_coords, True)
-            self._polygon_env.prepare()
         
         except Exception as e:
             raise RuntimeError(f"Failed to build pathfinding environment: {e}")
-
-    def save_map_states(self, fig_size = (8,8), save_dir = "plots/map_states"):
-        os.makedirs(save_dir, exist_ok=True)
-
-        # Bounding Box
-        minx, miny, maxx, maxy = self._shapely_boundary.bounds
-        bounds = box(minx - 1, miny - 1, maxx + 1, maxy + 1)
-
-        # Obstacles Union
-        obstacles = unary_union(self._shapely_obstacles)
-        
-        for t in range(self.get_num_timesteps()):
-            plt.figure(figsize=fig_size)
-            ax = plt.gca()
-
-            add_polygon(ax, bounds, fc="dimgray", ec="black", alpha=1.0, zorder=0)
-            add_polygon(ax, self._shapely_boundary, fc="white", ec="black", alpha=1.0, zorder=1)
-            add_polygon(ax, obstacles, fc="dimgray", ec="black", alpha=1.0, zorder=2)
-            add_polygon(ax, self._shadows[t], fc="blue", alpha=0.3, zorder=3)
-
-            for guard in self._guards:
-                gx, gy = guard.get_path()[t]
-                ax.plot(gx, gy, "r^", markersize=6, label="Guard")
-
-            if self._kernels:
-                for kernel in self.get_kernels(t):
-                    kx, ky = kernel.get_coords()
-                    ax.plot(kx, ky, "go", markersize=5, label="Kernel")
-
-            handles, labels = ax.get_legend_handles_labels()
-            by_label = dict(zip(labels, handles))
-            ax.legend(by_label.values(), by_label.keys(), loc="upper right")
-            ax.set_aspect("equal", adjustable="box")
-            plt.xlim(minx - 1, maxx + 1)
-            plt.ylim(miny - 1, maxy + 1)
-            plt.title(f"Map State at Timestep {t}", fontsize=12)
-            
-            filename = os.path.join(save_dir, f"map_timestep_{t}.png")
-            plt.savefig(filename, dpi=200, bbox_inches="tight")
-            plt.close()
-            print(f"✅ Saved map state for timestep {t} → {filename}")
+    
+    def get_closest_valid_pt(self, pt: Tuple[int|float, int|float]) -> Tuple[int|float, int|float]:
+        if self.is_valid_position(pt):
+            return pt
+        p = Point(pt)
+        nearest_geom, _ = nearest_points(self._shapely_walkable_area, p)
+        return (nearest_geom.x, nearest_geom.y)
 
     def is_valid_position(self, pt: Tuple[int|float, int|float]):
         return self._polygon_env.within_map(np.asarray(pt))
 
     def is_same_position(self, p1: Tuple[int|float, int|float], p2: Tuple[int|float, int|float]):
-        dx = p1[0] - p2[0]
-        dy = p1[1] - p2[1]
-        return (dx*dx + dy*dy) <= (self._prune_tol * self._prune_tol)
+        return math.dist(p1, p2) <= (self._prune_tol)
     
     def quantize_point(self, p):
         qx = round(p[0] / self._prune_tol)
         qy = round(p[1] / self._prune_tol)
         return (qx, qy)
+    
+    def is_visible(self, p: Tuple[int|float, int|float], timestep: int):
+        if not(0 <= timestep < self.get_num_timesteps()):
+            raise IndexError(f"Could not retrieve visibility polygon for invalid timetep {timestep}")
+        for vis_poly in self._visibility_polygons[timestep]:
+            coords = [(vis_poly[i].x(), vis_poly[i].y()) for i in range(vis_poly.n())]
+            poly = Polygon(coords)
+            if poly.covers(Point(p)):
+                #print(f"{p} is visible at timestep {timestep}")
+                return True
+        return False
     
     def get_player_start_pos(self):
         return self._player.get_start_pos(self)
@@ -282,26 +204,114 @@ class Map:
         return len(self._guards[0].get_path())
         
     def get_shortest_path(self, pt1: Tuple[float, float], pt2: Tuple[float, float]) -> Tuple[List[Tuple[float, float]], float]:
-        key = (round(pt1[0], 1), round(pt1[1], 1),round(pt2[0], 1), round(pt2[1], 1))
+        self._path_cache_queries += 1
+        key = (self.quantize_point(pt1), self.quantize_point(pt2))
         if key in self._path_cache:
-            #print("Path cache hit")
+            self._path_cache_hits += 1
             return self._path_cache[key]
-        path, length = self._polygon_env.find_shortest_path(pt1, pt2)
-        if (not path or not length):
-            raise RuntimeError(f"Could not find path between {pt1} and {pt2}.")
+        
+        if not self.is_valid_position(pt1):
+            pt1 = self.get_closest_valid_pt(pt1)
+        if not self.is_valid_position(pt2):
+            pt2 = self.get_closest_valid_pt(pt2)
+
+        try:
+            path, length = self._polygon_env.find_shortest_path(pt1, pt2)
+        except Exception as e:
+            print(f"Got exception in path planning between {pt1} and {pt2}. {e}")
+            return ([], 0.0)
+        
+        if (len(path) == 0 or length is None):
+            print(f"Could not find shortest path  between {pt1} and {pt2}.")
+            return ([], 0.0)
         self._path_cache[key] = (path, length)
         return path, length
+    
+    def get_longest_move_along_shortest_path(self, pt1: Tuple[float, float], pt2: Tuple[float, float]) -> Optional[Tuple[List[Tuple[float, float]], Tuple[int|float, int|float]]]:
+        path, length = self.get_shortest_path(pt1, pt2)
+        max_step = self._player.get_max_step()
+        
+        # Pt2 is reachable
+        if length <= max_step:
+            return (path, pt2)
+        # Path needs truncation
+        truncated_path = [path[0]]
+        dist_left = max_step
+
+        for a, b in zip(path, path[1:]):
+            ax, ay = a
+            bx, by = b
+
+            dx = bx - ax
+            dy = by - ay
+            seg_len = math.hypot(dx, dy)
+            #print(f"Got pt on truncated path: {bx, by}")
+
+            if seg_len < 1e-12:
+                # skip degenerate segment
+                continue
+            
+            # If the truncated point lies inside this segment
+            if seg_len >= dist_left:
+                ratio = dist_left / seg_len
+                new_x = ax + dx * ratio
+                new_y = ay + dy * ratio
+                new_pt = (new_x, new_y)
+
+                # Validate / snap to valid point
+                if not self.is_valid_position(new_pt):
+                    new_pt = (ax, ay)
+
+                truncated_path.append(new_pt)
+                return (truncated_path, new_pt)
+
+            # Else: consume this entire segment
+            truncated_path.append(b)
+            dist_left -= seg_len
+
+        # If we reach here something failed unexpectedly
+        print(f"Failed to truncate path from {pt1} to {pt2}")
+        return None
+        '''
+        else:
+            # Take a point along the path at max_step distance
+            pt = LineString(path).interpolate(self._player.get_max_step())
+            # Build truncated path: from start → pt
+            truncated_coords = []
+            dist_so_far = 0.0
+            for i in range(len(path) - 1):
+                seg = LineString([path[i], path[i + 1]])
+                seg_len = seg.length
+                if dist_so_far + seg_len >= self._player.get_max_step():
+                    # Cut inside this segment
+                    remaining = self._player.get_max_step() - dist_so_far
+                    cut_pt = seg.interpolate(remaining)
+                    truncated_coords.append((cut_pt.x, cut_pt.y))
+                    break
+                else:
+                    truncated_coords.append(path[i + 1])
+                    dist_so_far += seg_len
+            truncated_line = LineString([path[0]] + truncated_coords)
+            if self.is_valid_position((pt.x, pt.y)):
+                return (list(truncated_line.coords), (pt.x, pt.y))
+            else:
+                print(f"Got invalid truncated end position {pt}")
+                pt = self.get_closest_valid_pt((pt.x, pt.y))
+                print(f"Snapped pt to valid position {pt}")
+        print(f"Could not find longest move between {pt1} and {pt2}.")
+        return None
+        '''
     
     def get_visibility_polygon(self, timestep: int) -> MultiPolygon:
         if not(0 <= timestep < self.get_num_timesteps()):
             raise IndexError(f"Could not retrieve visibility polygon for invalid timetep {timestep}")
-        return MultiPolygon([poly.buffer(0) for poly in self._visibility_polygons[timestep].geoms])
+        return self._shapely_visibility_polygons[timestep]
     
     def get_shadow(self, timestep: int) -> MultiPolygon:
         if not(0 <= timestep < self.get_num_timesteps()):
                 raise IndexError(f"Could not retrieve shadow for invalid timetep {timestep}")
-        return MultiPolygon([poly.buffer(0) for poly in self._shadows[timestep].geoms])
-    
+        return self._shadows[timestep]
+
     def find_kernels(self, shape: BaseGeometry, step_factor: float, depth: int) -> List[Map.Kernel]: 
         kernels = []
         # Base case(s)
@@ -344,17 +354,21 @@ class Map:
         if not(0 <= timestep < self.get_num_timesteps()):
             raise IndexError(f"Could not retrieve kernels for invalid timetep {timestep}")
         
-        if (not self._kernels or not self._kernels_w_obs):
+        if (not self._kernels or not self._kernels_w_obs or not self._kernels_merged):
             self._kernels = [[] for _ in range(self.get_num_timesteps())]
             self._kernels_w_obs = [[] for _ in range(self.get_num_timesteps())]
+            self._kernels_merged = [[] for _ in range(self.get_num_timesteps())]
 
         if not self._kernels[timestep]:
             self._kernels[timestep] = self.find_kernels(self._shadows[timestep], 0.01, 0)
             self._kernels[timestep].sort(key=lambda k: k.get_depth(), reverse=True)
             self._kernels_w_obs[timestep] = self.find_kernels(self._shadows_w_obs[timestep], 0.01, 0)
             self._kernels_w_obs[timestep].sort(key=lambda k: k.get_depth(), reverse=True)
+
+            self._kernels_merged[timestep] = list(self._kernels[timestep] + self._kernels_w_obs[timestep])
+            self._kernels_merged[timestep].sort(key=lambda k: k.get_depth(), reverse=True)
                 
-        return [Map.Kernel(k.get_coords(), k.get_depth()) for k in list(self._kernels[timestep] + self._kernels_w_obs[timestep])]
+        return self._kernels_merged[timestep]
     
     class Kernel:
         def __init__(self, coords: Tuple[float, float], depth: int):

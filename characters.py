@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple
+import random
 from map import *
 
 class Character(ABC):

@@ -16,3 +16,4 @@ shapely==2.1.2
 six==1.17.0
 tqdm==4.67.1
 VisiLibity==1.0.10
+imageio==2.37.2
