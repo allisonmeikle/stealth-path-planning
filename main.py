@@ -75,7 +75,7 @@ def load_level_info(file_name):
     if not isinstance(obstacles, list) or not all(isinstance(poly, list) and all(is_valid_position(p) for p in poly) for poly in obstacles):
         raise ValueError("Map obstacles parameter missing or invalid")
     
-    map = Map(grid_size, boundary, obstacles, guard_objs, player)
+    map = Map(file_name, grid_size, boundary, obstacles, guard_objs, player)
     return map
 
 def main():
@@ -90,9 +90,9 @@ def main():
     end_time = time.time()
     print(f"Monte Carlo run took {(end_time - start_time):.3f} seconds")
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    dirname = os.path.join(CUR_DIR, "results", "dec-4", f"results_{timestamp}")
+    dirname = os.path.join(CUR_DIR, "results", "dec-12", f"results_{timestamp}")
     run_time = f"{(end_time - start_time):.3f}"
-    output_results(monte_carlo_tree, run_time, save_dir=dirname, duration=0.3)
+    output_results(monte_carlo_tree, run_time, save_dir=dirname, duration=0.3, save=True)
     os.system('say "Monte Carlo run complete"')
 
 if __name__ == "__main__":

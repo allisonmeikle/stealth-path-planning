@@ -1,5 +1,5 @@
 import os
-import math
+import csv
 import matplotlib.pyplot as plt
 from shapely.geometry import box
 from shapely.ops import unary_union
@@ -338,13 +338,13 @@ def plot_path(tree, path, save_dir, label):
         kernels = tree._map.get_kernels(i)
         for k in kernels:
             kx, ky = k.get_coords()
-            ax.plot(kx, ky, "ro", markersize=4)
+            ax.plot(kx, ky, "ro", markersize=4, alpha=0.3)
             ax.text(kx+0.05, ky+0.05, f"{k.get_depth()}", fontsize=6)
 
         # draw path so far
         path_pts.extend(list(edge._path.coords))
         xs, ys = zip(*path_pts)
-        ax.plot(xs, ys, "g--", lw=2)
+        ax.plot(xs, ys, "g--", lw=2, alpha=0.3)
 
         ax.set_title(f"{label}: t={node._depth}, Q/N={node._total_value/node._visits:.2f}, N={node._visits}")
 
@@ -357,7 +357,7 @@ def plot_path(tree, path, save_dir, label):
     return in_shadow, len(path)
 
 
-def output_results(tree: MonteCarloTree, run_time: str, save_dir="plots/best_path_gif", duration=0.25):
+def output_results(tree: MonteCarloTree, run_time: str, save_dir="plots/best_path_gif", duration=0.25, save=True):
     os.makedirs(save_dir, exist_ok=True)
     p_visits   = os.path.join(save_dir, "best_path_max_visits")
     p_score    = os.path.join(save_dir, "best_path_max_score")
@@ -382,6 +382,107 @@ def output_results(tree: MonteCarloTree, run_time: str, save_dir="plots/best_pat
 
     with open(os.path.join(save_dir, "stats.txt"), 'w') as f:
         f.write(stats)
+    
+    if save:
+        csv_path = os.path.join(save_dir, "..", "visibility_experiments_final_fr.csv")
+        file_exists = os.path.isfile(csv_path)
+
+        header = [
+            "Level",
+            "Runtime (s)",
+            "C (exploration constant)",
+
+            "k (progressive widening constant)",
+            "alpha (progressive widening exponent)", 
+            
+            "delta (visible area distance)",
+            "beta (guard distance)", 
+            "theta (shadow distance)"
+            "gamma (kernel distance)",
+            "tau (kernel decay rate)",
+            "top_k (kernels scored)",
+            "eta (depth bonus)",
+            
+            "lambda (rollout weight)",
+            "phi (rollout depth)",
+            "rollout_ratio",
+
+            "visibile node penalty",
+            "visibile edge penalty",
+
+            "brute_force_moves","max_kernel_moves",
+            "path_cache_hits","num_path_queries","path_cache_hit_ratio",
+            "tt_hits","tt_queries","tt_hit_ratio",
+            "player_start_pos",
+
+            "visits_timesteps_shadow","visits_total_timesteps","visits_shadow_pct",
+            "score_timesteps_shadow","score_total_timesteps","score_shadow_pct",
+            "back_timesteps_shadow","back_total_timesteps","back_shadow_pct",
+        ]
+
+
+        # compute values
+        row = {
+            "Level": tree._map._level,
+            "Runtime (s)": float(run_time),
+
+            "C (exploration constant)": tree._c,
+            "k (progressive widening constant)": tree._k,
+            "alpha (progressive widening exponent)": tree._alpha,       
+            "delta (visible area distance)": tree._delta,
+            "beta (guard distance)": tree._beta,
+            "theta (shadow distance)": tree._theta,
+            "gamma (kernel distance)": tree._gamma,
+            "tau (kernel decay rate)": tree._tau,
+            "top_k (kernels scored)": tree._top_k,
+            "eta (depth bonus)": tree._eta,
+            "lambda (rollout weight)": tree._lambda,
+            "phi (rollout depth)": tree._phi,
+            "rollout_ratio": tree._rollout_ratio,
+
+            "visible node penalty": tree._visible_node_penalty,
+            "visible edge penalty": tree._visible_edge_penalty,
+            "brute_force_moves": tree._brute_force,
+            "max_kernel_moves": tree._max_kernel_moves,
+
+            "path_cache_hits": tree._map._path_cache_hits,
+            "num_path_queries": tree._map._path_cache_queries,
+            "path_cache_hit_ratio": (
+                round(tree._map._path_cache_hits / tree._map._path_cache_queries * 100, 2)
+                if tree._map._path_cache_queries > 0 else 0
+            ),
+            "tt_hits": tree._tt_hits,
+            "tt_queries": tree._tt_queries,
+            "tt_hit_ratio": (
+                round(tree._tt_hits / tree._tt_queries * 100, 2)
+                if tree._tt_queries > 0 else 0
+            ),
+
+            "player_start_pos": tree._map.get_player_start_pos(),
+
+            "visits_timesteps_shadow": shadow_ct1,
+            "visits_total_timesteps": total1,
+            "visits_shadow_pct": round(shadow_ct1 / total1 * 100, 2) if total1 > 0 else 0,
+
+            "score_timesteps_shadow": shadow_ct2,
+            "score_total_timesteps": total2,
+            "score_shadow_pct": round(shadow_ct2 / total2 * 100, 2) if total2 > 0 else 0,
+
+            "back_timesteps_shadow": shadow_ct3,
+            "back_total_timesteps": total3,
+            "back_shadow_pct": round(shadow_ct3 / total3 * 100, 2) if total3 > 0 else 0,
+        }
+
+
+        # write to CSV
+        with open(csv_path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=header)
+
+            # write header only if new file
+            if not file_exists:
+                writer.writeheader()
+
+            writer.writerow(row)
 
 def plot_guard_path(map, save_dir="plots/guard_path"):
     os.makedirs(save_dir, exist_ok=True)

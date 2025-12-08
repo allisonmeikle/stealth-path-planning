@@ -15,7 +15,9 @@ from extremitypathfinder import PolygonEnvironment
 from characters import *
 
 class Map:
-    def __init__(self, grid_size: Tuple[int|float, int|float], boundary: List[Tuple[int|float, int|float]], obstacles: List[List[Tuple[int|float, int|float]]], guards: List[Guard], player: Player):
+    def __init__(self, level: str, grid_size: Tuple[int|float, int|float], boundary: List[Tuple[int|float, int|float]], obstacles: List[List[Tuple[int|float, int|float]]], guards: List[Guard], player: Player):
+        self._level = level
+        
         # Validate grid size
         if len(grid_size) != 2 or grid_size[0] <= 0 or grid_size[1] <= 0:
             raise ValueError(f"Invalid grid size {grid_size}: must be positive (width, height)")
@@ -46,8 +48,10 @@ class Map:
         # Calculate walkable area
         self._shapely_walkable_area = self._shapely_boundary_inflated.difference(unary_union(self._shapely_obstacles_inflated))
         # Pruning tolerance parameter α
-        self._prune_alpha = 0.02 
+        self._prune_alpha = 0.02
         self._prune_tol = math.sqrt(self._shapely_walkable_area.area) * self._prune_alpha
+        print(f"Got prune tolerance {self._prune_tol}")
+        self._min_dist_btw_kernels = self._prune_tol * 10.0
 
         # Build visibility environment (visilibity)
         self.build_visibility_environment()
@@ -58,6 +62,7 @@ class Map:
         self._kernels = None
         self._kernels_w_obs = None
         self._kernels_merged = None
+        self._kernels_diverse = None
         self._path_cache = {}
         self._path_cache_queries = 0
         self._path_cache_hits = 0
@@ -187,7 +192,8 @@ class Map:
         return False
     
     def get_player_start_pos(self):
-        return self._player.get_start_pos(self)
+        x, y = self._player.get_start_pos(self)
+        return (round(x, 2), round(y, 2))
     
     def get_player_max_step(self):
         return self._player.get_max_step()
@@ -272,35 +278,6 @@ class Map:
         # If we reach here something failed unexpectedly
         print(f"Failed to truncate path from {pt1} to {pt2}")
         return None
-        '''
-        else:
-            # Take a point along the path at max_step distance
-            pt = LineString(path).interpolate(self._player.get_max_step())
-            # Build truncated path: from start → pt
-            truncated_coords = []
-            dist_so_far = 0.0
-            for i in range(len(path) - 1):
-                seg = LineString([path[i], path[i + 1]])
-                seg_len = seg.length
-                if dist_so_far + seg_len >= self._player.get_max_step():
-                    # Cut inside this segment
-                    remaining = self._player.get_max_step() - dist_so_far
-                    cut_pt = seg.interpolate(remaining)
-                    truncated_coords.append((cut_pt.x, cut_pt.y))
-                    break
-                else:
-                    truncated_coords.append(path[i + 1])
-                    dist_so_far += seg_len
-            truncated_line = LineString([path[0]] + truncated_coords)
-            if self.is_valid_position((pt.x, pt.y)):
-                return (list(truncated_line.coords), (pt.x, pt.y))
-            else:
-                print(f"Got invalid truncated end position {pt}")
-                pt = self.get_closest_valid_pt((pt.x, pt.y))
-                print(f"Snapped pt to valid position {pt}")
-        print(f"Could not find longest move between {pt1} and {pt2}.")
-        return None
-        '''
     
     def get_visibility_polygon(self, timestep: int) -> MultiPolygon:
         if not(0 <= timestep < self.get_num_timesteps()):
@@ -350,16 +327,17 @@ class Map:
         
         return kernels
 
-    def get_kernels(self, timestep: int):
+    def get_kernels(self, timestep: int, diverse=False) -> List[Kernel]:
         if not(0 <= timestep < self.get_num_timesteps()):
             raise IndexError(f"Could not retrieve kernels for invalid timetep {timestep}")
         
-        if (not self._kernels or not self._kernels_w_obs or not self._kernels_merged):
+        if (self._kernels is None or self._kernels_w_obs is None or self._kernels_merged is None or self._kernels_diverse is None):
             self._kernels = [[] for _ in range(self.get_num_timesteps())]
             self._kernels_w_obs = [[] for _ in range(self.get_num_timesteps())]
             self._kernels_merged = [[] for _ in range(self.get_num_timesteps())]
+            self._kernels_diverse = [[] for _ in range(self.get_num_timesteps())]
 
-        if not self._kernels[timestep]:
+        if not self._kernels[timestep] or not self._kernels_w_obs[timestep] or not self._kernels_merged[timestep]:
             self._kernels[timestep] = self.find_kernels(self._shadows[timestep], 0.01, 0)
             self._kernels[timestep].sort(key=lambda k: k.get_depth(), reverse=True)
             self._kernels_w_obs[timestep] = self.find_kernels(self._shadows_w_obs[timestep], 0.01, 0)
@@ -367,7 +345,23 @@ class Map:
 
             self._kernels_merged[timestep] = list(self._kernels[timestep] + self._kernels_w_obs[timestep])
             self._kernels_merged[timestep].sort(key=lambda k: k.get_depth(), reverse=True)
-                
+
+            if diverse:
+                if not self._kernels_diverse[timestep]:
+                    for kernel in self._kernels_merged[timestep]:
+                        x, y = kernel.get_coords()
+                        #print(f"checking kernel coords {x, y}")
+                        # distance check against previously taken kernels
+                        too_close = any(
+                            (x - ker.get_coords()[0])**2 + (y - ker.get_coords()[1])**2 < self._min_dist_btw_kernels**2
+                            for ker in self._kernels_diverse[timestep]
+                        )
+                        if not too_close:
+                            #print(f"adding coords {x, y}")
+                            self._kernels_diverse[timestep].append(kernel)   
+                #print(f"Got {len(self._kernels_diverse[timestep])} diverse kernels from {len(self._kernels_merged[timestep])}")
+                return self._kernels_diverse[timestep]
+
         return self._kernels_merged[timestep]
     
     class Kernel:

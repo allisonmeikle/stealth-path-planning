@@ -16,19 +16,23 @@ class MonteCarloTree:
     _c = math.sqrt(2.0) # for ucb score (constant)
 
     _k = 1.0 # for progressive widening (constant)
-    _alpha = 0.2 # for progressive widening (exponent)
+    _alpha = 0.3 # for progressive widening (exponent)
 
-    _delta = 1.0 # for shadow score
+    _delta = 0.5 # for visible area distance score
     _beta = 0.4 # for guard distance score
     _gamma = 1.0 # for kernel distance score
+    _theta = 1.0 # for shadow distance score (for visible nodes)
     _tau = 0.1 # for distance-decay rate
-    _top_k = 3 # how many kernels to path plan to
-    _eta = 0.0   # depth bonus weight
+    _top_k = 1 # how many kernels to path plan to in scoring
+    _eta = 5.0   # depth bonus weight
 
     _lambda = 3.0 # weight of rollout value in heuristic
     _phi = 20 # rollout depth
     _rollout_ratio = False # True if using survived steps/rollout_depths for score, False is using 0 or 1
 
+    _visible_node_penalty = -100 # Score given to positions visible by a guard
+    _visible_edge_penalty = 0.1
+    _max_kernel_moves = math.inf # maximum number of moves path planning to a kernel for each node 
     _brute_force = False # using brute force moves
 
     def __init__(self, map: Map, max_edges = 10):
@@ -36,6 +40,8 @@ class MonteCarloTree:
         self._max_edges = max_edges
         self._nodes = []
         self._transposition_table = {}
+        self._tt_queries = 0
+        self._tt_hits = 0
         self._root = MonteCarloTree.Node(self, map.get_player_start_pos(), 0)
         self._max_depth = map.get_num_timesteps()-1
         self._saw_terminal = False
@@ -44,37 +50,34 @@ class MonteCarloTree:
         self._num_nodes = 0
         self._depth = 0
         self._breadth = {0: 1}
+        
+        self._score_cache = {}
 
     def select(self) -> Tuple[MonteCarloTree.Node, List[MonteCarloTree.Edge]]:
         node = self._root
         path_edges = []
 
-        while True:
-            if (node._depth >= self._max_depth):
-                return node, path_edges
-            
-            moves = node.get_potential_moves()
-            if (len(moves) == 0):
-                return node, path_edges
-            
+        while True:            
+            moves = node.get_potential_moves()            
             allowed_children = min(len(moves), max(1, math.floor(MonteCarloTree._k * (node._visits ** MonteCarloTree._alpha))))
-            if len(node._outgoing_edges) < min(self._max_edges, allowed_children):
-                new_child = self.expand(node)
-                if new_child is not None:
-                    return new_child, path_edges
+            needs_expansion = not node._fully_expanded and len(node._outgoing_edges) < min(self._max_edges, allowed_children)
+            if len(moves) == 0 or needs_expansion or self._map.is_visible(node._loc, node._depth):
+                # Reached a "leaf" or a node that needs expansion
+                return node, path_edges
 
             # choose best edge
             best_edge = max(node._outgoing_edges, key=lambda e: e.ucb_score())
             path_edges.append(best_edge)
             node = best_edge._child
     
-    def expand(self, node : MonteCarloTree.Node) -> Optional[MonteCarloTree.Node]:
-        used_locs = {self._map.quantize_point(e._child.get_loc()) for e in node._outgoing_edges}
-        for target in node.get_potential_moves():
-            #print(f"Got potential move {act_type} to {target}")
-            qtarget = self._map.quantize_point(target)
-            if qtarget in used_locs:
-                continue
+    def expand(self, node : MonteCarloTree.Node) -> Optional[Tuple[MonteCarloTree.Node, MonteCarloTree.Edge]]:
+        if node._fully_expanded:
+            return None
+        
+        used_locs = {e._child.get_loc() for e in node._outgoing_edges}
+        moves = node.get_potential_moves()
+        #print(f"Expanding {node} that has {len(moves)} potential moves and {len(node._outgoing_edges)} outgoing edges")
+        for target in moves:
             res = self._map.get_longest_move_along_shortest_path(node._loc, target)
             if res is None:
                 continue
@@ -82,23 +85,22 @@ class MonteCarloTree:
             if len(path) == 1:
                 path, new_loc = [node._loc, target], target
                 
-            qnew = node._map.quantize_point(new_loc)
-            if qnew in used_locs:
+            if any(self._map.is_same_position(new_loc, uloc) for uloc in used_locs):
                 continue
-            #print(f"Got path from {node._loc} to {new_loc} along path {path}")
+
             # make child
+            #print(f"Adding node at {new_loc} at depth {node._depth + 1}")
             child = self._get_or_create_node(new_loc, node._depth + 1)
-            edge = MonteCarloTree.Edge(node, child, LineString(path))
+            edge = MonteCarloTree.Edge(node, child, LineString(path), self._map.get_visibility_polygon(node._depth))
             node._outgoing_edges.append(edge)
             child._incoming_edges.append(edge)
-            return child
-
+            return child, edge
+        node._fully_expanded = True
         return None  # no new moves
         
     def rollout(self, node: MonteCarloTree.Node):
         cur_loc = node._loc
         cur_depth = node._depth
-        max_step = self._map.get_player_max_step()
         survived_steps = 0
         last_hidden = False
 
@@ -111,19 +113,6 @@ class MonteCarloTree:
             # early stop if we reached the final guard timestep
             if cur_depth >= self._max_depth:
                 break
-
-            # random rollout step
-            '''            while True:
-                angle = random.random() * 2 * math.pi
-                dist = random.random() * max_step
-                candidate = (
-                    cur_loc[0] + dist * math.cos(angle),
-                    cur_loc[1] + dist * math.sin(angle)
-                )
-                if self._map.is_valid_position(candidate):
-                    cur_loc = candidate
-                    break
-            '''
 
             cur_depth += 1
 
@@ -138,42 +127,50 @@ class MonteCarloTree:
     def backpropagate(self, leaf : MonteCarloTree.Node, path_edges : List[MonteCarloTree.Edge], result):
         leaf._visits += 1
         leaf._total_value += result
-        if leaf._depth == self._max_depth:
-            self._saw_terminal = True
-
         for edge in reversed(path_edges):
             edge._visits += 1
             edge._total_value += result
-
             parent = edge._parent
             parent._visits += 1
             parent._total_value += result
     
     def run(self, total_time):
         start = time.time()
-
+        last_checked = start
         while True:
             now = time.time()
             elapsed = now - start
 
-            # stop if full time budget is completed
-            #if elapsed >= total_time and self._depth >= self._max_depth:
-            if elapsed >= total_time:
+            best_path = self.get_path_max_visits()
+            if elapsed >= total_time and len(best_path) >= (self._max_depth):
                 return
+            
+            if now - last_checked > 10:
+                print(f"Been running for {elapsed}s, length of best path {len(best_path)}, depth {self._depth}")
+                last_checked = now
 
-            # normal MCTS iteration
             leaf, edges = self.select()
-            value = self.evaluate(leaf)
-            self.backpropagate(leaf, edges, value)
+            result = self.expand(leaf)
+            if result is not None:
+                new_node, edge = result
+                edges.append(edge)
+                value = self.evaluate(new_node)
+                self.backpropagate(new_node, edges, value)
+            else:
+                # Expand called on fully expanded node
+                self.backpropagate(leaf, edges, leaf.get_score())
 
     def get_map(self):
         return self._map
     
     def _get_or_create_node(self, loc, depth, store=True):
-        qx, qy = self._map.quantize_point(loc)
-        key = (qx, qy, depth)
-        if key in self._transposition_table:
-            return self._transposition_table[key]
+        self._tt_queries += 1
+        for (x, y, d), node in self._transposition_table.items():
+            if d == depth and self._map.is_same_position((x, y), loc):
+                self._tt_hits += 1
+                return node
+        
+        key = (loc[0], loc[1], depth)
         node = MonteCarloTree.Node(self, loc, depth)
         self._transposition_table[key] = node
         # only update stats for expanded nodes, not rollouts
@@ -208,7 +205,7 @@ class MonteCarloTree:
     
     def get_path_backtracked(self):
         # find best full-depth leaf
-        leaves = [n for n in self._nodes if n._depth == self._depth]
+        leaves = [n for n in self._nodes if n._depth == self._max_depth]
         if not leaves:
             return []  # fallback
         
@@ -232,11 +229,13 @@ class MonteCarloTree:
         return path
 
     def get_stats(self):
-        stats = f"Hyperparameters:\n k={MonteCarloTree._k} (progressive widening constant)\n"
+        stats = f"Hyperparameters:\n"
         stats += f"c={MonteCarloTree._c} (exploration constant)\n"
+        stats += f"k={MonteCarloTree._k} (progressive widening constant)\n"
         stats += f"alpha={MonteCarloTree._alpha} (progressive widening exponent)\n"
         stats += f"beta={MonteCarloTree._beta} (guard distance score)\n"
         stats += f"delta={MonteCarloTree._delta} (distance to visible area score)\n"
+        stats += f"theta={MonteCarloTree._theta} (distance to shadow score (for visible nodes)\n"
         stats += f"gamma={MonteCarloTree._gamma} (kernel distance score)\n"
         stats += f"tau={MonteCarloTree._tau} (kernel distance-decay rate)\n"
         stats += f"top_k={MonteCarloTree._top_k} (num of kernels evaluated for score)\n"
@@ -244,7 +243,10 @@ class MonteCarloTree:
         stats += f"lambda={MonteCarloTree._lambda} (weight of rollout value in heuristic)\n"
         stats += f"phi={MonteCarloTree._phi} (rollout depth)\n"  
         stats += f"using rollout ratio={MonteCarloTree._rollout_ratio}\n"  
-        stats += f"using brute force moves = {MonteCarloTree._brute_force}\n"             
+        stats += f"visible node penalty = {MonteCarloTree._visible_node_penalty}\n"
+        stats += f"visible edge penalty = {MonteCarloTree._visible_edge_penalty}\n"
+        stats += f"using brute force moves = {MonteCarloTree._brute_force}\n"   
+        stats += f"max kernel moves = {MonteCarloTree._max_kernel_moves}\n"   
 
         stats += f"Total nodes in tree: {self._num_nodes}, with max depth {self._depth}, and maximum allowed edges {self._max_edges}\n"
         stats += "Node breadth by depth:\n"
@@ -252,7 +254,8 @@ class MonteCarloTree:
             stats += f"  Depth {depth}: {self._breadth[depth]} node(s)\n"
 
         stats += f"Path cache hit ratio {self._map._path_cache_hits / self._map._path_cache_queries}, {self._map._path_cache_hits} hits, {self._map._path_cache_queries} queries\n"
-                                                                  
+        stats += f"Transposition table hit ratio {self._tt_hits / self._tt_queries}, {self._tt_hits} hits, {self._tt_queries} queries\n"
+                                           
         return stats
 
     class Node:
@@ -262,7 +265,8 @@ class MonteCarloTree:
             self._depth = depth
             self._map = tree.get_map()
 
-            self._potential_moves: Optional[List[Tuple[LineString, Tuple[float, float]]]] = None
+            self._potential_moves: Optional[List[Tuple[float, float]]] = None
+            self._fully_expanded = False
             self._incoming_edges: List[MonteCarloTree.Edge] = []
             self._outgoing_edges: List[MonteCarloTree.Edge] = []
             self._score: Optional[float] = None
@@ -279,7 +283,12 @@ class MonteCarloTree:
         def get_score(self):
             if (self._score is None):
                 if self._map.is_visible(self._loc, self._depth):
-                    self._score = 0.0 # score is 0 if the player is visible
+                    self._score = MonteCarloTree._visible_node_penalty
+                    # add a part of the score of how close it is to shadow though
+                    shadow = self._map.get_shadow(self._depth)
+                    d = Point(self._loc).distance(shadow)
+                    self._score += MonteCarloTree._theta * math.exp(-MonteCarloTree._tau * d)
+                    #print(f"Got visible score {self._score}")
                     return self._score
                 
                 # find shortest distance to visible area
@@ -304,10 +313,9 @@ class MonteCarloTree:
                 #print(f"Guard distance {shortest_path} gave guard score {guard_score}")
                 #guard_distance_score = MonteCarloTree._beta * MonteCarloTree.Node.sigmoid(shortest_path)
                 guard_distance_score = MonteCarloTree._beta * (guard_score)
-                
 
                 # find distance from the player to the 3 deepest kernels
-                kernels = self._map.get_kernels(self._depth)
+                kernels = self._map.get_kernels(self._depth, True)
                 top_k = kernels[:MonteCarloTree._top_k] if len(kernels) >= MonteCarloTree._top_k else kernels[:]
                 path_dists = []
                 weights = []
@@ -330,7 +338,7 @@ class MonteCarloTree:
                 #print(f"Kernel at depth {self._depth}, loc {self._loc} got kernel score {kernel_score}")
 
                 # depth bonus 
-                depth_bonus = MonteCarloTree._eta * (self._depth / self._tree._max_depth)
+                depth_bonus = MonteCarloTree._eta * (self._depth / self._tree._max_depth) ** 2
 
                 # rollout score
                 rollout_score = MonteCarloTree._lambda * self._tree.rollout(self)
@@ -338,92 +346,81 @@ class MonteCarloTree:
                 self._score = shadow_score + guard_distance_score + kernel_score + depth_bonus + rollout_score
             return self._score
                 
-        def get_potential_moves(self) -> List[Tuple[LineString, Tuple[float, float]]]:
+        def get_potential_moves(self) -> List[Tuple[int|float, int|float]]:
             if self._potential_moves is None:
                 moves = []
-                if (self._depth == self._tree._max_depth or self._map.is_visible(self._loc, self._depth)):
-                    return moves
                 
+                if (self._depth == self._tree._max_depth):
+                    return moves
+                    
                 # Compute moves towards kernels
                 moves.extend(self.get_moves_towards_kernels())
                 # Compute brute force moves
                 if (MonteCarloTree._brute_force):
                     moves.extend(self.get_brute_force_moves())
+
+                random.shuffle(moves)
                 self._potential_moves = moves
 
             return self._potential_moves
         
-        def get_brute_force_moves(self, num_directions=4):
+        def get_brute_force_moves(self, num_directions=4) -> List[Tuple[int|float, int|float]]:
             moves = []
             max_step = self._map.get_player_max_step()
+            min_step = self._map._prune_tol*2
+
             x0, y0 = self._loc
+
+            num_samples = 5
+            t_values = [
+                max_step - (max_step - min_step) * (i / (num_samples - 1))
+                for i in range(num_samples)
+            ]
+
             for i in range(num_directions):
                 angle = 2 * math.pi * i / num_directions
-                target = (x0 + max_step * math.cos(angle), y0 + max_step * math.sin(angle))
-                moves.append(target)
+                dx = math.cos(angle)
+                dy = math.sin(angle)
+
+                # Try the farthest point first, then shrink inward
+                for t in t_values:
+                    candidate = (x0 + t * dx, y0 + t * dy)
+
+                    if self._map.is_valid_position(candidate):
+                        moves.append(candidate)
+                        break  # stop after first valid distance in this direction
+
             random.shuffle(moves)
             return moves
 
-        def get_moves_towards_kernels(self):
-            return [kernel.get_coords() for kernel in self._map.get_kernels(self._depth + 1)]
-            
-            '''
-            moves = []
-
-            for kernel in self._map.get_kernels(self._depth+1):
-                if self._map.is_same_position(self._loc, kernel.get_coords()):
-                    continue
-                target = kernel.get_coords()
-                path, length = self._map.get_shortest_path(self._loc, target)
-                if not path or not length:
-                    continue
-
-                line = LineString(path)
-                if length <= self._map.get_player_max_step():
-                    # Entire kernel is reachable
-                    moves.append((line, target))
-                else:
-                    # Take a point along the path at max_step distance
-                    pt = line.interpolate(self._map.get_player_max_step())
-                    # Build truncated path: from start → pt
-                    truncated_coords = []
-                    dist_so_far = 0.0
-                    for i in range(len(path) - 1):
-                        seg = LineString([path[i], path[i + 1]])
-                        seg_len = seg.length
-                        if dist_so_far + seg_len >= self._map.get_player_max_step():
-                            # Cut inside this segment
-                            remaining = self._map.get_player_max_step() - dist_so_far
-                            cut_pt = seg.interpolate(remaining)
-                            truncated_coords.append((cut_pt.x, cut_pt.y))
-                            break
-                        else:
-                            truncated_coords.append(path[i + 1])
-                            dist_so_far += seg_len
-                    truncated_line = LineString([path[0]] + truncated_coords)
-                    if self._map.is_valid_position((pt.x, pt.y)):
-                        moves.append((truncated_line, (pt.x, pt.y)))
-            return moves
-            '''
+        def get_moves_towards_kernels(self) -> List[Tuple[int|float, int|float]]:
+            coords = []
+            for kernel in self._map.get_kernels(self._depth + 1, True):
+                if len(coords) < MonteCarloTree._max_kernel_moves:
+                    coords.append(kernel.get_coords())
+                else: 
+                    break
+            return coords
 
         def __str__(self) -> str:
-            return f"Node (loc=({self._loc[0]:.2f}, {self._loc[1]:.2f}), depth={self._depth}, score {self._total_value/self._visits:.2f})"
+            avg = self._total_value / self._visits if self._visits > 0 else 0.0
+            return (
+                f"Node (loc=({self._loc[0]:.2f}, {self._loc[1]:.2f}), "
+                f"depth={self._depth}, score={avg:.2f})"
+            )
+
 
     class Edge: 
-        def __init__(self, parent: MonteCarloTree.Node, child: MonteCarloTree.Node, path: LineString):
+        def __init__(self, parent: MonteCarloTree.Node, child: MonteCarloTree.Node, path: LineString, vis_poly: MultiPolygon):
             self._parent = parent
             self._child = child
             self._path = path
 
             self._visits = 0
             self._total_value = 0.0
-            px, py = parent._loc
-            cx, cy = child._loc
-            dx, dy = cx - px, cy - py
-            length = math.hypot(dx, dy)
-            self._direction = (0.0, 0.0)
-            if length > 0:
-                self._direction = (dx / length, dy / length)
+            
+            self._vis_poly = vis_poly
+            self._visible_crossing = self._path.intersects(self._vis_poly)
                 
         def ucb_score(self):
             if self._visits == 0:
@@ -433,7 +430,11 @@ class MonteCarloTree:
                 exploration = MonteCarloTree._c * math.sqrt(
                     math.log(self._parent._visits + 1) / self._visits
                 )
+                
+                if self._visible_crossing:
+                    exploration *= MonteCarloTree._visible_edge_penalty
+                #print(f"Edge from {self._parent} has ucb score {exploitation + exploration}")
                 return exploitation + exploration
 
         def __str__(self) -> str:
-            return f"Edge (score={self._total_value/self._visits:.2f}"
+            return f"Edge score={self._total_value/self._visits:.2f}"
