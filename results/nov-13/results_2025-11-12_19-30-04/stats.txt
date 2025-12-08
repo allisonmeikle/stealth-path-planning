@@ -1,0 +1,27 @@
+Best leaf at depth 19 with score 30.263
+Total nodes in tree: 16730
+Node breadth by depth:
+  Depth 0: 1 node(s)
+  Depth 1: 4 node(s)
+  Depth 2: 16 node(s)
+  Depth 3: 60 node(s)
+  Depth 4: 113 node(s)
+  Depth 5: 108 node(s)
+  Depth 6: 154 node(s)
+  Depth 7: 79 node(s)
+  Depth 8: 13 node(s)
+  Depth 9: 11 node(s)
+  Depth 10: 11 node(s)
+  Depth 11: 14 node(s)
+  Depth 12: 20 node(s)
+  Depth 13: 25 node(s)
+  Depth 14: 41 node(s)
+  Depth 15: 61 node(s)
+  Depth 16: 115 node(s)
+  Depth 17: 254 node(s)
+  Depth 18: 664 node(s)
+  Depth 19: 1660 node(s)
+  Depth 20: 3661 node(s)
+  Depth 21: 6293 node(s)
+  Depth 22: 3352 node(s)
+Took 100.001 to find the best path

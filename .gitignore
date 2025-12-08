@@ -1,0 +1,10 @@
+__pycache__/
+
+venv
+.envrc
+
+.DS_Store
+
+plots
+results
+related_work

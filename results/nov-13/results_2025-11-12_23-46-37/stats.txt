@@ -1,0 +1,4 @@
+Total nodes in tree: 0, with max depth 0, and maximum allowed edges 5
+Node breadth by depth:
+  Depth 0: 1 node(s)
+Took 0.000 to find the best path
