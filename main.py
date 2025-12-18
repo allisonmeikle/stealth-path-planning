@@ -1,9 +1,10 @@
 import argparse
 import json
+import os
 import time
 from datetime import datetime
-import os.path
-from monte_carlo import MonteCarloTree
+
+from monte_carlo import *
 from characters import *
 from map import *
 from plot_helper import *
@@ -17,14 +18,9 @@ def is_valid_guard(guard):
     if not isinstance(guard, dict):
         return False
     
-    radius = guard.get("radius")
-    if not radius or not isinstance(radius, float):
-        return False
-    
     positions = guard.get("positions")
     if not positions or not isinstance(positions, list) or not len(positions) > 1 or not all(is_valid_position(x) for x in positions):
         return False
-    
     return True
 
 def load_level_info(file_name):
@@ -60,13 +56,9 @@ def load_level_info(file_name):
     
     guard_objs = []
     for guard in guards:
-        guard_objs.append(Guard(guard.get("radius"), guard.get("speed"), guard.get("positions")))
+        guard_objs.append(Guard(guard.get("positions")))
 
     # Map info
-    grid_size = level.get("grid_size")
-    if not grid_size or not is_valid_position(grid_size):
-        raise ValueError("Grid size parameter missing or invalid")
-
     boundary = level.get("boundary")
     if not boundary or not all(is_valid_position(x) for x in boundary):
         raise ValueError("Map boundary parameter missing or invalid")
@@ -75,27 +67,40 @@ def load_level_info(file_name):
     if not isinstance(obstacles, list) or not all(isinstance(poly, list) and all(is_valid_position(p) for p in poly) for poly in obstacles):
         raise ValueError("Map obstacles parameter missing or invalid")
     
-    map = Map(file_name, grid_size, boundary, obstacles, guard_objs, player)
+    map = Map(file_name, boundary, obstacles, guard_objs, player)
     return map
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("level", help="Name of the JSON file in the ./maps directory")
     args = parser.parse_args()
-
+    
     map = load_level_info(args.level)
-    monte_carlo_tree = MonteCarloTree(map, max_edges=100)
+    plot_static_guard_paths_by_timestep(
+        map_obj=map,
+        out_path="results/trident_level_guards.png"
+    )
+    return
+
+    monte_carlo_tree = MonteCarloGraph(map)
     start_time = time.time()
     monte_carlo_tree.run(60)
     end_time = time.time()
     print(f"Monte Carlo run took {(end_time - start_time):.3f} seconds")
+    
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    dirname = os.path.join(CUR_DIR, "results", "dec-12", f"results_{timestamp}")
+    dirname = os.path.join(CUR_DIR, "results", "brute_force_experiments_mgs_new", f"results_{timestamp}")
+    os.makedirs(dirname, exist_ok=True)
     run_time = f"{(end_time - start_time):.3f}"
     output_results(monte_carlo_tree, run_time, save_dir=dirname, duration=0.3, save=True)
-    os.system('say "Monte Carlo run complete"')
+
+    for i in range(map.get_num_timesteps()):
+        plot_shadow_kernels_side_by_side(
+            map=map,
+            timestep=i,
+            save_path=f"figures/shadow_kernels_t{i}.png"
+        )
+
 
 if __name__ == "__main__":
     main()
-   
-

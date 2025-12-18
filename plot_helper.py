@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from shapely.geometry import box
 from shapely.ops import unary_union
 #from descartes import PolygonPatch
-from monte_carlo import MonteCarloTree
+from monte_carlo import MonteCarloGraph
 from map import Map
 
 plt.style.use("classic")
@@ -187,10 +187,6 @@ def plot_move(map_poly, obstacles, guard, player, shadow_area, next_point, path,
     else: 
         plt.show()
 
-import os
-import matplotlib.pyplot as plt
-from shapely.geometry import Point
-
 def plot_paths(tree, base_dir="tree_paths"):
     """
     Traverse the MonteCarloTree and save plots of all root-to-leaf paths.
@@ -307,6 +303,199 @@ def plot_vis_poly(map: Map, timestep: int):
 
     plt.savefig("visibility_polygon_example.png", dpi=300)
 
+def plot_shadow_poly(map: Map, timestep: int):
+    fig, ax = plt.subplots()   # ONE figure, ONE axis
+    ax.axis("off")
+    guard_pos = map.get_guard_positions(timestep)[0]
+    vis_poly = map.get_visibility_polygon(timestep)
+    shadow_poly = map.get_shadow(timestep)
+
+    # Draw outside & obstacles
+    add_polygon(ax, map._shapely_boundary, fc="dimgray", alpha=0.5, zorder=1)
+    add_polygon(ax, unary_union(map._shapely_obstacles), fc="dimgray", alpha=1.0)
+    add_polygon(ax, vis_poly, fc="red", alpha=0.8, zorder=0)
+    add_polygon(ax, shadow_poly, fc="blue", alpha=0.8, zorder=0)
+
+    ax.plot(guard_pos[0], guard_pos[1], "ko")
+    ax.text(guard_pos[0] + 0.2, guard_pos[1] + 0.2, "$q$", fontsize=14)
+
+    plt.savefig("visibility_polygon_example.png", dpi=300)
+
+from matplotlib.lines import Line2D
+
+
+def plot_static_colored_paths_with_spotted(tree, path, out_path, show=False):
+    """
+    Given a MonteCarloGraph `tree` and a best `path` (list of edges),
+    draw a static colour-coded plot with:
+
+      - Player path (colour changes with timestep)
+      - All guard paths (same colour scheme)
+      - Red X markers where the player is visible (spotted)
+      - Legend entries for player start/end and guard start/end
+    """
+
+    if not path:
+        print("plot_static_colored_paths_with_spotted: empty path, skipping.")
+        return
+
+    map_obj = tree.get_map()
+
+    # --- Reconstruct player positions and timesteps from the path ---
+    player_positions = []
+    timesteps = []
+
+    for edge in path:
+        node = edge._parent
+        player_positions.append(node.get_loc())
+        timesteps.append(node._depth)
+
+    final_node = path[-1]._child
+    player_positions.append(final_node.get_loc())
+    timesteps.append(final_node._depth)
+
+    combined = sorted(zip(timesteps, player_positions), key=lambda x: x[0])
+    timesteps, player_positions = zip(*combined)
+    timesteps = list(timesteps)
+    player_positions = list(player_positions)
+
+    t_min, t_max = min(timesteps), max(timesteps)
+    if t_max == t_min:
+        t_max = t_min + 1
+
+    # --- Setup figure ---
+    fig, ax = plt.subplots(figsize=(7, 7))
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_title("Best Path (colour-coded by timestep)", pad=28)
+    ax.axis("off")
+
+    # --- Draw map geometry ---
+    add_polygon(ax, map_obj._shapely_boundary, fc="white", ec="black", alpha=1.0)
+
+    if map_obj._shapely_obstacles:
+        add_polygon(
+            ax,
+            unary_union(map_obj._shapely_obstacles),
+            fc="dimgray",
+            ec="black",
+            alpha=1.0,
+        )
+
+    # --- Colormap & normalizer over timesteps ---
+    cmap = plt.cm.plasma
+    norm = plt.Normalize(vmin=t_min, vmax=t_max)
+
+    # --- Guard paths (all guards) ---
+    for guard in map_obj._guards:
+        guard_path = guard.get_path()
+        T_guard = len(guard_path)
+
+        # Colour-coded segments (same cmap/norm as player)
+        for i in range(len(timesteps) - 1):
+            t0 = timesteps[i]
+            if t0 + 1 >= T_guard:
+                continue
+            (gx0, gy0) = guard_path[t0]
+            (gx1, gy1) = guard_path[t0 + 1]
+            ax.plot(
+                [gx0, gx1],
+                [gy0, gy1],
+                color=cmap(norm(t0)),
+                linewidth=1.5,
+                alpha=0.8,
+            )
+
+        # Mark first/last positions for this guard
+        g_start_t = timesteps[0]
+        g_end_t = min(timesteps[-1], T_guard - 1)
+        sx, sy = guard_path[g_start_t]
+        ex, ey = guard_path[g_end_t]
+        ax.plot(sx, sy, marker="s", markersize=5, color="black")  # guard start
+        ax.plot(ex, ey, marker="s", markersize=5, color="gray")   # guard end
+
+    # --- Player path segments ---
+    for i in range(len(player_positions) - 1):
+        (px0, py0) = player_positions[i]
+        (px1, py1) = player_positions[i + 1]
+        t = timesteps[i]
+        ax.plot(
+            [px0, px1],
+            [py0, py1],
+            color=cmap(norm(t)),
+            linewidth=2.5,
+            alpha=1.0,
+        )
+
+    # Player start/end markers (no labels here; legend will be custom)
+    sx, sy = player_positions[0]
+    ex, ey = player_positions[-1]
+    ax.plot(sx, sy, "bo", markersize=6)
+    ax.plot(ex, ey, "go", markersize=6)
+
+    # --- Mark "spotted" positions (player visible at timestep t) ---
+    spotted_x, spotted_y = [], []
+    for (t, pos) in zip(timesteps, player_positions):
+        if map_obj.is_visible(pos, t):
+            spotted_x.append(pos[0])
+            spotted_y.append(pos[1])
+
+    if spotted_x:
+        ax.scatter(
+            spotted_x,
+            spotted_y,
+            marker="x",
+            s=60,
+            color="red",
+            linewidths=1.5,
+        )
+
+    # --- Colourbar for timesteps ---
+    sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Timestep")
+
+    # --- Custom legend so we only get one entry per symbol ---
+    legend_elements = [
+        Line2D([0], [0], marker='o', linestyle='None',
+               markerfacecolor='blue', markeredgecolor='blue',
+               markersize=7, label='Player start'),
+        Line2D([0], [0], marker='o', linestyle='None',
+               markerfacecolor='green', markeredgecolor='green',
+               markersize=7, label='Player end'),
+        Line2D([0], [0], marker='x', linestyle='None',
+               color='red', markersize=8, label='Spotted'),
+        Line2D([0], [0], marker='s', linestyle='None',
+               markerfacecolor='black', markeredgecolor='black',
+               markersize=7, label='Guard start'),
+        Line2D([0], [0], marker='s', linestyle='None',
+               markerfacecolor='gray', markeredgecolor='black',
+               markersize=7, label='Guard end'),
+    ]
+
+    ax.legend(
+        handles=legend_elements,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.12),   # above title
+        ncol=3,
+        framealpha=0.9,
+        fontsize=9,
+    )
+
+    ax.margins(0.05)
+    plt.tight_layout(rect=[0.0, 0.0, 0.88, 1.0])
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+        print(f"Saved colour-coded map to {out_path}")
+
+
+
 def plot_path(tree, path, save_dir, label):
     os.makedirs(save_dir, exist_ok=True)
     
@@ -357,34 +546,29 @@ def plot_path(tree, path, save_dir, label):
     return in_shadow, len(path)
 
 
-def output_results(tree: MonteCarloTree, run_time: str, save_dir="plots/best_path_gif", duration=0.25, save=True):
+def output_results(tree: MonteCarloGraph, run_time: str, save_dir="plots/best_path_gif", duration=0.25, save=True):
     os.makedirs(save_dir, exist_ok=True)
     p_visits   = os.path.join(save_dir, "best_path_max_visits")
-    p_score    = os.path.join(save_dir, "best_path_max_score")
-    p_back     = os.path.join(save_dir, "best_path_backtrack")
 
     # extract all 3 paths
     path_visits = tree.get_path_max_visits()
-    path_score  = tree.get_path_max_score()
-    path_back   = tree.get_path_backtracked()
 
     # plot each
     shadow_ct1, total1 = plot_path(tree, path_visits, p_visits, "Max-visits")
-    shadow_ct2, total2 = plot_path(tree, path_score,  p_score,  "Max-score")
-    shadow_ct3, total3 = plot_path(tree, path_back,   p_back,   "Backtracked full-depth")
+
+    static_path_png = os.path.join(save_dir, "best_path_max_visits_static.png")
+    plot_static_colored_paths_with_spotted(tree, path_visits, static_path_png, show=False)
 
     # write stats
     stats = tree.get_stats()
     stats += f"Max-visits path gives {shadow_ct1} of {total1} ({shadow_ct1/total1*100:.2f}%) steps in shadow\n"
-    stats += f"Max-score path gives {shadow_ct2} of {total2} ({shadow_ct2/total2*100:.2f}%) steps in shadow\n"
-    stats += f"Backtracked path gives {shadow_ct3} of {total3} ({shadow_ct3/total3*100:.2f}%) steps in shadow\n"
     stats += f"Took {run_time} to find the best path\n"
 
     with open(os.path.join(save_dir, "stats.txt"), 'w') as f:
         f.write(stats)
     
     if save:
-        csv_path = os.path.join(save_dir, "..", "visibility_experiments_final_fr.csv")
+        csv_path = os.path.join(save_dir, "..", "visibility_experiments_set_starts.csv")
         file_exists = os.path.isfile(csv_path)
 
         header = [
@@ -396,8 +580,8 @@ def output_results(tree: MonteCarloTree, run_time: str, save_dir="plots/best_pat
             "alpha (progressive widening exponent)", 
             
             "delta (visible area distance)",
+            "theta (shadow distance)",
             "beta (guard distance)", 
-            "theta (shadow distance)"
             "gamma (kernel distance)",
             "tau (kernel decay rate)",
             "top_k (kernels scored)",
@@ -407,17 +591,14 @@ def output_results(tree: MonteCarloTree, run_time: str, save_dir="plots/best_pat
             "phi (rollout depth)",
             "rollout_ratio",
 
-            "visibile node penalty",
-            "visibile edge penalty",
+            "visible node penalty",
 
-            "brute_force_moves","max_kernel_moves",
+            "brute_force_moves",
             "path_cache_hits","num_path_queries","path_cache_hit_ratio",
             "tt_hits","tt_queries","tt_hit_ratio",
             "player_start_pos",
 
-            "visits_timesteps_shadow","visits_total_timesteps","visits_shadow_pct",
-            "score_timesteps_shadow","score_total_timesteps","score_shadow_pct",
-            "back_timesteps_shadow","back_total_timesteps","back_shadow_pct",
+            "visits_timesteps_shadow","visits_total_timesteps","visits_shadow_pct"
         ]
 
 
@@ -430,8 +611,8 @@ def output_results(tree: MonteCarloTree, run_time: str, save_dir="plots/best_pat
             "k (progressive widening constant)": tree._k,
             "alpha (progressive widening exponent)": tree._alpha,       
             "delta (visible area distance)": tree._delta,
-            "beta (guard distance)": tree._beta,
             "theta (shadow distance)": tree._theta,
+            "beta (guard distance)": tree._beta,
             "gamma (kernel distance)": tree._gamma,
             "tau (kernel decay rate)": tree._tau,
             "top_k (kernels scored)": tree._top_k,
@@ -441,9 +622,7 @@ def output_results(tree: MonteCarloTree, run_time: str, save_dir="plots/best_pat
             "rollout_ratio": tree._rollout_ratio,
 
             "visible node penalty": tree._visible_node_penalty,
-            "visible edge penalty": tree._visible_edge_penalty,
             "brute_force_moves": tree._brute_force,
-            "max_kernel_moves": tree._max_kernel_moves,
 
             "path_cache_hits": tree._map._path_cache_hits,
             "num_path_queries": tree._map._path_cache_queries,
@@ -463,14 +642,6 @@ def output_results(tree: MonteCarloTree, run_time: str, save_dir="plots/best_pat
             "visits_timesteps_shadow": shadow_ct1,
             "visits_total_timesteps": total1,
             "visits_shadow_pct": round(shadow_ct1 / total1 * 100, 2) if total1 > 0 else 0,
-
-            "score_timesteps_shadow": shadow_ct2,
-            "score_total_timesteps": total2,
-            "score_shadow_pct": round(shadow_ct2 / total2 * 100, 2) if total2 > 0 else 0,
-
-            "back_timesteps_shadow": shadow_ct3,
-            "back_total_timesteps": total3,
-            "back_shadow_pct": round(shadow_ct3 / total3 * 100, 2) if total3 > 0 else 0,
         }
 
 
@@ -499,6 +670,8 @@ def plot_guard_path(map, save_dir="plots/guard_path"):
         # Draw map
         add_polygon(ax, map._shapely_boundary, fc="white", ec="black", alpha=1.0)
         add_polygon(ax, unary_union(map._shapely_obstacles), fc="dimgray", ec="black", alpha=1.0)
+        shadow = map.get_shadow(t)
+        add_polygon(ax, shadow, fc="blue", ec="black", alpha=0.25)
 
         # Draw ALL guards at this timestep
         for i, guard in enumerate(map._guards):
@@ -585,3 +758,284 @@ def plot_shadow_and_kernels(map, save_dir="plots/shadow_kernels"):
         plt.close()
 
         print(f"Saved: {out_path}")
+
+
+import matplotlib.pyplot as plt
+from shapely.ops import unary_union
+
+def plot_shadow_variants(map: Map, timestep: int, save_path=None, figsize=(10, 5)):
+    """
+    Plot the two shadow representations for a single timestep:
+      (1) shadow without obstacles
+      (2) shadow with obstacles merged
+
+    Produces a side-by-side comparison suitable for a paper figure.
+    """
+
+    boundary = map._shapely_boundary
+    obstacles = unary_union(map._shapely_obstacles)
+
+    shadow = map._shadows[timestep]
+    shadow_w_obs = map._shadows_w_obs[timestep]
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize, sharex=True, sharey=True)
+
+    titles = [
+        "Shadow region (obstacles excluded)",
+        "Shadow region (obstacles included)"
+    ]
+
+    for ax, shadow_poly, title in zip(axes, [shadow, shadow_w_obs], titles):
+        ax.set_aspect("equal", adjustable="box")
+        ax.axis("off")
+
+        # Map geometry
+        add_polygon(ax, boundary, fc="white", ec="black", alpha=1.0, zorder=1)
+        add_polygon(ax, obstacles, fc="dimgray", ec="black", alpha=1.0, zorder=2)
+
+        # Shadow
+        add_polygon(ax, shadow_poly, fc="blue", alpha=0.35, zorder=3)
+
+        # Guards
+        for i, guard in enumerate(map._guards):
+            gx, gy = guard.get_path()[timestep]
+            ax.plot(gx, gy, "r^", markersize=6)
+
+        ax.set_title(title, fontsize=11)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved shadow comparison → {save_path}")
+    else:
+        plt.show()
+
+import os
+import matplotlib.pyplot as plt
+from shapely.ops import unary_union
+
+def plot_shadow_kernels_side_by_side(
+    map: Map,
+    timestep: int,
+    save_path: str | None = None,
+    figsize=(12, 5)
+):
+    """
+    Plot two subfigures for a single timestep:
+      Left:  shadow (no obstacles) + kernels from that shadow
+      Right: shadow with obstacles merged + kernels from that shadow
+
+    Kernel points are annotated with their recursive depth.
+    """
+
+    boundary = map._shapely_boundary
+    obstacles = unary_union(map._shapely_obstacles)
+
+    shadow = map._shadows[timestep]
+    shadow_w_obs = map._shadows_w_obs[timestep]
+
+    # Ensure kernels are computed
+    kernels_no_obs = map._kernels[timestep] if map._kernels else map.get_kernels(timestep)
+    kernels_w_obs = map._kernels_w_obs[timestep] if map._kernels_w_obs else map.get_kernels(timestep)
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize, sharex=True, sharey=True)
+
+    panels = [
+        (
+            axes[0],
+            shadow,
+            kernels_no_obs,
+            "Shadow (obstacles excluded)",
+            "green"
+        ),
+        (
+            axes[1],
+            shadow_w_obs,
+            kernels_w_obs,
+            "Shadow (obstacles included)",
+            "orange"
+        ),
+    ]
+
+    for ax, shadow_poly, kernels, title, kernel_color in panels:
+        ax.set_aspect("equal", adjustable="box")
+        ax.axis("off")
+
+        # -------------------------------------------------------
+        # Map geometry
+        # -------------------------------------------------------
+        add_polygon(ax, boundary, fc="white", ec="black", alpha=1.0, zorder=1)
+        add_polygon(ax, obstacles, fc="dimgray", ec="black", alpha=1.0, zorder=2)
+
+        # -------------------------------------------------------
+        # Shadow
+        # -------------------------------------------------------
+        add_polygon(ax, shadow_poly, fc="blue", alpha=0.35, zorder=3)
+
+        # -------------------------------------------------------
+        # Kernels + depth annotations
+        # -------------------------------------------------------
+        for k in kernels:
+            x, y = k.get_coords()
+            depth = k.get_depth()
+
+            ax.plot(
+                x, y,
+                marker="o",
+                color=kernel_color,
+                markersize=6,
+                zorder=5
+            )
+
+            ax.annotate(
+                str(depth),
+                (x, y),
+                textcoords="offset points",
+                xytext=(0, 7),
+                ha="center",
+                fontsize=9,
+                color="black",
+                zorder=6,
+                bbox=dict(
+                    boxstyle="round,pad=0.2",
+                    fc="white",
+                    ec="none",
+                    alpha=0.75
+                )
+            )
+
+
+        # -------------------------------------------------------
+        # Guard positions
+        # -------------------------------------------------------
+        for guard in map._guards:
+            gx, gy = guard.get_path()[timestep]
+            ax.plot(gx, gy, "r^", markersize=7, zorder=7)
+
+        ax.set_title(title, fontsize=11)
+
+    plt.tight_layout()
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved shadow + kernel comparison → {save_path}")
+    else:
+        plt.show()
+
+
+def plot_static_guard_paths_by_timestep(
+    map_obj,
+    out_path,
+    show=False,
+    figsize=(7, 7),
+    cmap=plt.cm.plasma
+):
+    """
+    Plot a static, colour-coded visualization of guard paths.
+    Each guard's trajectory is coloured by timestep to show motion over time.
+
+    No player paths or visibility markers are shown.
+    """
+
+    # -------------------------------------------------------
+    # Setup figure
+    # -------------------------------------------------------
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.set_aspect("equal", adjustable="box")
+    ax.axis("off")
+
+    # -------------------------------------------------------
+    # Draw map geometry
+    # -------------------------------------------------------
+    add_polygon(ax, map_obj._shapely_boundary, fc="white", ec="black", alpha=1.0)
+
+    if map_obj._shapely_obstacles:
+        add_polygon(
+            ax,
+            unary_union(map_obj._shapely_obstacles),
+            fc="dimgray",
+            ec="black",
+            alpha=1.0,
+        )
+
+    # -------------------------------------------------------
+    # Determine timestep range
+    # -------------------------------------------------------
+    T = map_obj.get_num_timesteps()
+    t_min, t_max = 0, max(T - 1, 1)
+    norm = plt.Normalize(vmin=t_min, vmax=t_max)
+
+    # -------------------------------------------------------
+    # Plot guard paths
+    # -------------------------------------------------------
+    for guard_id, guard in enumerate(map_obj._guards):
+        path = guard.get_path()
+        T_guard = len(path)
+
+        # Draw coloured segments
+        for t in range(T_guard - 1):
+            (x0, y0) = path[t]
+            (x1, y1) = path[t + 1]
+
+            ax.plot(
+                [x0, x1],
+                [y0, y1],
+                color=cmap(norm(t)),
+                linewidth=2.0,
+                alpha=0.9,
+            )
+
+        # Mark start and end
+        sx, sy = path[0]
+        ex, ey = path[-1]
+
+        ax.plot(sx, sy, marker="s", markersize=6, color="black")
+        ax.plot(ex, ey, marker="s", markersize=6, color="gray")
+
+    # -------------------------------------------------------
+    # Colourbar
+    # -------------------------------------------------------
+    sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Timestep", fontsize=10)
+
+    # -------------------------------------------------------
+    # Legend (minimal, clean)
+    # -------------------------------------------------------
+    legend_elements = [
+        Line2D([0], [0], marker='s', linestyle='None',
+               markerfacecolor='black', markeredgecolor='black',
+               markersize=7, label='Guard start'),
+        Line2D([0], [0], marker='s', linestyle='None',
+               markerfacecolor='gray', markeredgecolor='black',
+               markersize=7, label='Guard end'),
+    ]
+
+    ax.legend(
+        handles=legend_elements,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.05),
+        ncol=2,
+        framealpha=0.9,
+        fontsize=9,
+    )
+
+    ax.margins(0.05)
+    plt.tight_layout()
+
+    # -------------------------------------------------------
+    # Save / show
+    # -------------------------------------------------------
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+        print(f"Saved guard-path visualization to {out_path}")

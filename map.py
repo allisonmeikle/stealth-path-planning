@@ -1,27 +1,21 @@
 from __future__ import annotations
 import math
 import numpy as np
-import os
 import visilibity as vis
 
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple
 from shapely.geometry.base import BaseGeometry
 from shapely.validation import explain_validity
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union, nearest_points
-from shapely import Geometry, LineString, MultiPolygon, Point, Polygon
+from shapely import MultiPolygon, Point, Polygon
 from extremitypathfinder import PolygonEnvironment
 
 from characters import *
 
 class Map:
-    def __init__(self, level: str, grid_size: Tuple[int|float, int|float], boundary: List[Tuple[int|float, int|float]], obstacles: List[List[Tuple[int|float, int|float]]], guards: List[Guard], player: Player):
+    def __init__(self, level: str, boundary: List[Tuple[int|float, int|float]], obstacles: List[List[Tuple[int|float, int|float]]], guards: List[Guard], player: Player):
         self._level = level
-        
-        # Validate grid size
-        if len(grid_size) != 2 or grid_size[0] <= 0 or grid_size[1] <= 0:
-            raise ValueError(f"Invalid grid size {grid_size}: must be positive (width, height)")
-        self._grid_size = grid_size
         self._guards = guards
         self._player = player
         
@@ -47,7 +41,8 @@ class Map:
 
         # Calculate walkable area
         self._shapely_walkable_area = self._shapely_boundary_inflated.difference(unary_union(self._shapely_obstacles_inflated))
-        # Pruning tolerance parameter α
+        
+        # Pruning tolerance parameter
         self._prune_alpha = 0.02
         self._prune_tol = math.sqrt(self._shapely_walkable_area.area) * self._prune_alpha
         print(f"Got prune tolerance {self._prune_tol}")
@@ -175,10 +170,13 @@ class Map:
     def is_same_position(self, p1: Tuple[int|float, int|float], p2: Tuple[int|float, int|float]):
         return math.dist(p1, p2) <= (self._prune_tol)
     
-    def quantize_point(self, p):
-        qx = round(p[0] / self._prune_tol)
-        qy = round(p[1] / self._prune_tol)
-        return (qx, qy)
+    def quantize_point(self, p) -> Tuple[int|float, int|float]:
+        qx = round(p[0] / self._prune_tol) * self._prune_tol
+        qy = round(p[1] / self._prune_tol) * self._prune_tol
+        new_p = self.get_closest_valid_pt((qx, qy))
+        
+        #print(f"Point {p} quantized to {new_p}")
+        return new_p
     
     def is_visible(self, p: Tuple[int|float, int|float], timestep: int):
         if not(0 <= timestep < self.get_num_timesteps()):
@@ -235,6 +233,9 @@ class Map:
     
     def get_longest_move_along_shortest_path(self, pt1: Tuple[float, float], pt2: Tuple[float, float]) -> Optional[Tuple[List[Tuple[float, float]], Tuple[int|float, int|float]]]:
         path, length = self.get_shortest_path(pt1, pt2)
+        if not path or length == 0.0:
+            return None
+        
         max_step = self._player.get_max_step()
         
         # Pt2 is reachable
@@ -266,8 +267,7 @@ class Map:
 
                 # Validate / snap to valid point
                 if not self.is_valid_position(new_pt):
-                    new_pt = (ax, ay)
-
+                    new_pt = self.get_closest_valid_pt(new_pt)
                 truncated_path.append(new_pt)
                 return (truncated_path, new_pt)
 
@@ -294,6 +294,13 @@ class Map:
         # Base case(s)
         if shape.is_empty:
             return kernels
+        
+        elif shape.geom_type == "Point":
+            pt = (shape.x, shape.y)
+            if self.is_valid_position(pt):
+                kernels.append(Map.Kernel(pt, depth))
+            return kernels
+
         elif (shape.geom_type == 'LineString'):
             mid_pt = shape.interpolate(0.5, normalized=True)
             for pt in (shape.coords[0], (mid_pt.x, mid_pt.y), shape.coords[-1]):
@@ -343,23 +350,21 @@ class Map:
             self._kernels_w_obs[timestep] = self.find_kernels(self._shadows_w_obs[timestep], 0.01, 0)
             self._kernels_w_obs[timestep].sort(key=lambda k: k.get_depth(), reverse=True)
 
-            self._kernels_merged[timestep] = list(self._kernels[timestep] + self._kernels_w_obs[timestep])
+            # Removes duplicate kernels
+            self._kernels_merged[timestep] = list(set(self._kernels[timestep] + self._kernels_w_obs[timestep]))
             self._kernels_merged[timestep].sort(key=lambda k: k.get_depth(), reverse=True)
 
             if diverse:
                 if not self._kernels_diverse[timestep]:
                     for kernel in self._kernels_merged[timestep]:
                         x, y = kernel.get_coords()
-                        #print(f"checking kernel coords {x, y}")
                         # distance check against previously taken kernels
                         too_close = any(
                             (x - ker.get_coords()[0])**2 + (y - ker.get_coords()[1])**2 < self._min_dist_btw_kernels**2
                             for ker in self._kernels_diverse[timestep]
                         )
                         if not too_close:
-                            #print(f"adding coords {x, y}")
                             self._kernels_diverse[timestep].append(kernel)   
-                #print(f"Got {len(self._kernels_diverse[timestep])} diverse kernels from {len(self._kernels_merged[timestep])}")
                 return self._kernels_diverse[timestep]
 
         return self._kernels_merged[timestep]
@@ -374,6 +379,17 @@ class Map:
         
         def get_depth(self) -> int:
             return self._depth
+        
+        def __eq__(self, other):
+            if not isinstance(other, Map.Kernel):
+                return False
+            return (
+                self._coords == other._coords and
+                self._depth == other._depth
+            )
+
+        def __hash__(self):
+            return hash((self._coords, self._depth))
         
         def __str__(self) -> str:
             return f"Kernel (point=({self._coords[0]:.2f}, {self._coords[1]:.2f}), depth={self._depth})"

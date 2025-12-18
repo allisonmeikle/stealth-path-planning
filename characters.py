@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import List, Optional, Tuple
 import random
 from map import *
@@ -40,9 +40,8 @@ class Player(Character):
             raise RuntimeError(f"Could not generate a valid player starting position")
         return self._start_pos
 
-class Guard(Character):
-    def __init__(self, radius: int|float, max_step: int|float, path: List[Tuple[int|float, int|float]]):
-        super().__init__(radius, max_step)
+class Guard():
+    def __init__(self, path: List[Tuple[int|float, int|float]]):
         self._path = list(path)
 
     def get_path(self) -> List[Tuple[int|float, int|float]]:
