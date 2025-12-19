@@ -1,0 +1,11 @@
+Level,Runtime (s),C (exploration constant),k (progressive widening constant),alpha (progressive widening exponent),delta (visible area distance),theta (shadow distance),beta (guard distance),gamma (kernel distance),tau (kernel decay rate),top_k (kernels scored),eta (depth bonus),lambda (rollout weight),phi (rollout depth),rollout_ratio,visible node penalty,brute_force_moves,path_cache_hits,num_path_queries,path_cache_hit_ratio,tt_hits,tt_queries,tt_hit_ratio,player_start_pos,visits_timesteps_shadow,visits_total_timesteps,visits_shadow_pct
+mgs_level.json,60.132,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,5.0,2.0,7,False,-100,True,345,2473,13.95,106,430,24.65,"(18.6, 10.3)",35,36,97.22
+mgs_level.json,73.415,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,5.0,2.0,7,False,-100,True,385,2703,14.24,92,446,20.63,"(13.6, 10.6)",31,36,86.11
+mgs_level.json,60.014,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,5.0,2.0,7,False,-100,True,260,2207,11.78,83,393,21.12,"(1.5, 9.5)",33,36,91.67
+mgs_level.json,93.465,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,5.0,2.0,7,False,-100,True,201,3521,5.71,157,703,22.33,"(7.0, 8.5)",36,36,100.0
+mgs_level.json,116.203,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,5.0,2.0,7,False,-100,True,289,4853,5.96,190,964,19.71,"(9.5, 8.5)",36,36,100.0
+mgs_level.json,95.638,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,5.0,2.0,7,False,-100,True,117,3243,3.61,124,685,18.1,"(13.0, 7.0)",31,36,86.11
+mgs_level.json,152.415,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,5.0,2.0,7,False,-100,True,311,5760,5.4,258,1194,21.61,"(6.5, 5.0)",36,36,100.0
+mgs_level.json,120.037,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,5.0,2.0,7,False,-100,True,249,4559,5.46,199,903,22.04,"(4.0, 2.0)",36,36,100.0
+mgs_level.json,119.827,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,5.0,2.0,7,False,-100,True,305,5327,5.73,238,1090,21.83,"(8.0, 2.0)",36,36,100.0
+mgs_level.json,98.064,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,5.0,2.0,7,False,-100,True,276,4465,6.18,186,863,21.55,"(13.0, 2.5)",34,36,94.44

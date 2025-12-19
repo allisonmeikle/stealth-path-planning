@@ -1,0 +1,51 @@
+Hyperparameters:
+c=1.4142135623730951 (exploration constant)
+k=1.0 (progressive widening constant)
+alpha=0.3 (progressive widening exponent)
+beta=0.5 (guard distance score)
+delta=0.75 (distance to visible area score)
+theta=5.0 (distance to shadow score)
+gamma=1.0 (kernel distance score)
+tau=0.1 (kernel distance-decay rate)
+top_k=1 (num of kernels evaluated for score)
+eta=0.0 (depth bonus)
+lambda=2.0 (weight of rollout value in heuristic)
+phi=7 (rollout depth)
+using rollout ratio=False
+visible node penalty = -10
+visible edge penalty = 0
+using brute force moves = False
+max kernel moves = inf
+Total nodes in tree: 115, with max depth 24, and maximum allowed edges inf
+Node breadth by depth:
+  Depth 0: 1 node(s)
+  Depth 1: 2 node(s)
+  Depth 2: 2 node(s)
+  Depth 3: 1 node(s)
+  Depth 4: 1 node(s)
+  Depth 5: 2 node(s)
+  Depth 6: 3 node(s)
+  Depth 7: 3 node(s)
+  Depth 8: 3 node(s)
+  Depth 9: 3 node(s)
+  Depth 10: 3 node(s)
+  Depth 11: 4 node(s)
+  Depth 12: 7 node(s)
+  Depth 13: 7 node(s)
+  Depth 14: 7 node(s)
+  Depth 15: 7 node(s)
+  Depth 16: 6 node(s)
+  Depth 17: 6 node(s)
+  Depth 18: 6 node(s)
+  Depth 19: 9 node(s)
+  Depth 20: 7 node(s)
+  Depth 21: 6 node(s)
+  Depth 22: 5 node(s)
+  Depth 23: 6 node(s)
+  Depth 24: 9 node(s)
+Path cache hit ratio 0.04060913705583756, 16 hits, 394 queries
+Transposition table hit ratio 0.10852713178294573, 14 hits, 129 queries
+Max-visits path gives 24 of 24 (100.00%) steps in shadow
+Max-score path gives 24 of 24 (100.00%) steps in shadow
+Backtracked path gives 24 of 24 (100.00%) steps in shadow
+Took 60.001 to find the best path

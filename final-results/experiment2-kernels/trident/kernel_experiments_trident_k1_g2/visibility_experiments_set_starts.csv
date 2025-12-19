@@ -1,0 +1,9 @@
+Level,Runtime (s),C (exploration constant),k (progressive widening constant),alpha (progressive widening exponent),delta (visible area distance),theta (shadow distance),beta (guard distance),gamma (kernel distance),tau (kernel decay rate),top_k (kernels scored),eta (depth bonus),lambda (rollout weight),phi (rollout depth),rollout_ratio,visible node penalty,brute_force_moves,path_cache_hits,num_path_queries,path_cache_hit_ratio,tt_hits,tt_queries,tt_hit_ratio,player_start_pos,visits_timesteps_shadow,visits_total_timesteps,visits_shadow_pct
+3_feet_level_sparse.json,60.0,1.4142135623730951,1.0,0.3,0.0,5.0,0.0,2.0,0.1,1,0.0,4.0,30,False,-10,False,4793,8136,58.91,1157,2829,40.9,"(6.75, 12.0)",62,67,92.54
+3_feet_level_sparse.json,60.0,1.4142135623730951,1.0,0.3,0.0,5.0,0.0,2.0,0.1,1,0.0,4.0,30,False,-10,False,2971,6071,48.94,1273,2526,50.4,"(8.5, 3.0)",66,67,98.51
+3_feet_level_sparse.json,60.0,1.4142135623730951,1.0,0.3,0.0,5.0,0.0,2.0,0.1,1,0.0,4.0,30,False,-10,False,5010,10831,46.26,1298,3716,34.93,"(10.5, 15.0)",66,67,98.51
+3_feet_level_sparse.json,60.003,1.4142135623730951,1.0,0.3,0.0,5.0,0.0,2.0,0.1,1,0.0,4.0,30,False,-10,False,5213,10681,48.81,1486,3788,39.23,"(13.5, 3.0)",67,67,100.0
+3_feet_level_sparse.json,60.018,1.4142135623730951,1.0,0.3,0.0,5.0,0.0,2.0,0.1,1,0.0,4.0,30,False,-10,False,4233,9353,45.26,1257,3348,37.54,"(10.5, 11.0)",66,67,98.51
+3_feet_level_sparse.json,60.0,1.4142135623730951,1.0,0.3,0.0,5.0,0.0,2.0,0.1,1,0.0,4.0,30,False,-10,False,5109,10550,48.43,1510,3801,39.73,"(15.5, 11.0)",67,67,100.0
+3_feet_level_sparse.json,60.0,1.4142135623730951,1.0,0.3,0.0,5.0,0.0,2.0,0.1,1,0.0,4.0,30,False,-10,False,3359,7451,45.08,948,2540,37.32,"(10.5, 8.0)",66,67,98.51
+3_feet_level_sparse.json,60.0,1.4142135623730951,1.0,0.3,0.0,5.0,0.0,2.0,0.1,1,0.0,4.0,30,False,-10,False,4914,10110,48.61,1402,3620,38.73,"(15.5, 8.0)",67,67,100.0

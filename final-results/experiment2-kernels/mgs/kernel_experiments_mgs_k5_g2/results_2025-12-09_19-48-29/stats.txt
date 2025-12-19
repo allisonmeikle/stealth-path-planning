@@ -1,0 +1,61 @@
+Hyperparameters:
+c=1.4142135623730951 (exploration constant)
+k=1.0 (progressive widening constant)
+alpha=0.3 (progressive widening exponent)
+beta=0.5 (guard distance score)
+delta=0.75 (distance to visible area score)
+theta=5.0 (distance to shadow score)
+gamma=2.0 (kernel distance score)
+tau=0.1 (kernel distance-decay rate)
+top_k=5 (num of kernels evaluated for score)
+eta=5.0 (depth bonus)
+lambda=2.0 (weight of rollout value in heuristic)
+phi=7 (rollout depth)
+using rollout ratio=False
+visible node penalty = -100
+using brute force moves = False
+Total nodes in tree: 1769, with max depth 36
+Node breadth by depth:
+  Depth 0: 1 node(s)
+  Depth 1: 4 node(s)
+  Depth 2: 8 node(s)
+  Depth 3: 12 node(s)
+  Depth 4: 31 node(s)
+  Depth 5: 51 node(s)
+  Depth 6: 62 node(s)
+  Depth 7: 76 node(s)
+  Depth 8: 92 node(s)
+  Depth 9: 86 node(s)
+  Depth 10: 78 node(s)
+  Depth 11: 60 node(s)
+  Depth 12: 54 node(s)
+  Depth 13: 58 node(s)
+  Depth 14: 64 node(s)
+  Depth 15: 71 node(s)
+  Depth 16: 72 node(s)
+  Depth 17: 73 node(s)
+  Depth 18: 66 node(s)
+  Depth 19: 70 node(s)
+  Depth 20: 72 node(s)
+  Depth 21: 64 node(s)
+  Depth 22: 64 node(s)
+  Depth 23: 63 node(s)
+  Depth 24: 52 node(s)
+  Depth 25: 50 node(s)
+  Depth 26: 46 node(s)
+  Depth 27: 43 node(s)
+  Depth 28: 39 node(s)
+  Depth 29: 30 node(s)
+  Depth 30: 30 node(s)
+  Depth 31: 29 node(s)
+  Depth 32: 29 node(s)
+  Depth 33: 22 node(s)
+  Depth 34: 19 node(s)
+  Depth 35: 15 node(s)
+  Depth 36: 14 node(s)
+Path cache hit ratio 0.22505146819807129, 4154 hits, 18458 queries
+Transposition table hit ratio 0.28554119547657514, 707 hits, 2476 queries
+Max-visits path gives 36 of 36 (100.00%) steps in shadow
+Max-score path gives 36 of 36 (100.00%) steps in shadow
+Backtracked path gives 32 of 36 (88.89%) steps in shadow
+Took 336.411 to find the best path

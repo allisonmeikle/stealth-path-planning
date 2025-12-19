@@ -1,0 +1,7 @@
+Level,Runtime (s),C (exploration constant),k (progressive widening constant),alpha (progressive widening exponent),delta (visible area distance),theta (shadow distance),beta (guard distance),gamma (kernel distance),tau (kernel decay rate),top_k (kernels scored),eta (depth bonus),lambda (rollout weight),phi (rollout depth),rollout_ratio,visible node penalty,brute_force_moves,path_cache_hits,num_path_queries,path_cache_hit_ratio,tt_hits,tt_queries,tt_hit_ratio,player_start_pos,visits_timesteps_shadow,visits_total_timesteps,visits_shadow_pct
+dummy_level.json,60.0,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,0.0,2.0,30,False,-100,False,7,352,1.99,11,112,9.82,"(2.0, 2.0)",24,24,100.0
+dummy_level.json,60.001,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,0.0,2.0,30,False,-100,False,1,169,0.59,4,52,7.69,"(2.0, 8.0)",16,24,66.67
+dummy_level.json,60.0,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,0.0,2.0,30,False,-100,False,11,325,3.38,12,109,11.01,"(3.0, 3.0)",24,24,100.0
+dummy_level.json,60.0,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,0.0,2.0,30,False,-100,False,7,305,2.3,7,97,7.22,"(3.0, 7.0)",24,24,100.0
+dummy_level.json,60.0,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,0.0,2.0,30,False,-100,False,14,413,3.39,26,141,18.44,"(2.0, 5.0)",24,24,100.0
+dummy_level.json,60.001,1.4142135623730951,1.0,0.3,0.75,5.0,0.5,0.8,0.1,1,0.0,2.0,30,False,-100,False,1,205,0.49,5,66,7.58,"(3.0, 5.0)",24,24,100.0
